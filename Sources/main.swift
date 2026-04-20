@@ -14,6 +14,8 @@ case "version", "--version", "-v":
     runVersion()
 case "logs":
     runLogs(args: Array(args.dropFirst()))
+case "status":
+    runStatus()
 case "":
     runForeground()
 default:

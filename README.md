@@ -46,6 +46,80 @@ Logs stream to `/opt/homebrew/var/log/houdini.log` (and `.err` for errors).
 
 Running the binary directly `houdini` is useful for debugging; `brew services` is the normal path.
 
+### Diagnostic subcommands
+
+```bash
+houdini status                    # print frontmost / Now-Playing state and the
+                                  # hide/show decision the daemon would make
+houdini logs <out|err> [--tail N] # tail houdini.log (out) or houdini.err (err)
+houdini version                   # print version
+houdini help                      # full usage
+```
+
+`houdini status` is the fastest way to verify what the daemon is seeing — it samples the same inputs (frontmost app, Accessibility fullscreen state, Now Playing) independently of the running daemon, so it's safe to run at any time.
+
+
+## Troubleshooting
+
+### Is it actually running?
+
+```bash
+brew services info houdini         # launchd view: Running / Loaded / PID
+pgrep -afl houdini                 # confirms the Swift daemon is alive
+pgrep -afl mediaremote-adapter     # confirms the Perl subprocess it spawns
+```
+
+A healthy install shows **two** processes — the `houdini` binary and the `/usr/bin/perl … mediaremote-adapter.pl stream …` child it spawns for Now-Playing events. If houdini is alive but the Perl child is missing, the daemon will log an error to `houdini.err` and exit.
+
+### The menu bar isn't hiding
+
+Run `houdini status` — it re-samples the same three inputs the daemon uses and names the first unmet precondition:
+
+```
+front:    Safari (pid=501, fullscreen=yes)
+playing:  com.spotify.client (pid=1337, playing=yes)
+decision: SHOW  (frontmost and Now Playing are different processes)
+```
+
+Common reasons:
+
+- **`frontmost is not fullscreen`** — only native fullscreen (⌃⌘F) counts, not maximized windows
+- **`nothing is using Now Playing`** — some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget
+- **`the Now Playing source is paused`** — play/pause state comes directly from the media app
+- **`frontmost and Now Playing are different processes`** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app
+
+### Accessibility permission
+
+If you revoke Accessibility while the daemon is running, `houdini.err` will contain:
+
+```
+houdini: Accessibility permission appears to have been revoked; fullscreen detection is disabled.
+```
+
+Re-grant in *System Settings → Privacy & Security → Accessibility*, then:
+
+```bash
+brew services restart houdini
+```
+
+### Starting clean
+
+If state feels stuck (menu bar hidden when it shouldn't be, orphan subprocesses, a foreground `./houdini` you forgot about):
+
+```bash
+brew services stop houdini
+pkill -x houdini                   # kill any foreground or orphan houdini
+pkill -f mediaremote-adapter       # kill any orphan Perl subprocesses
+brew services start houdini
+```
+
+### Log files
+
+- `/opt/homebrew/var/log/houdini.log` — HIDE/SHOW decisions with timestamps
+- `/opt/homebrew/var/log/houdini.err` — errors; output from the subprocess is prefixed `[adapter]` so it's distinguishable from houdini's own warnings
+
+Tail either via `houdini logs out --tail 50` or `houdini logs err --tail 50` — that command handles the Apple Silicon vs Intel Homebrew path automatically.
+
 
 ## Project layout
 

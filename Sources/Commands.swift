@@ -1,6 +1,6 @@
-// Implementations of the CLI verbs: (default) foreground run, `logs`,
-// `version`, `help`. LaunchAgent lifecycle is delegated to Homebrew
-// (`brew services`).
+// Implementations of the CLI verbs: (default) foreground run,
+// `status`, `logs`, `version`, `help`. LaunchAgent lifecycle is
+// delegated to Homebrew (`brew services`).
 
 import Cocoa
 import Foundation
@@ -54,6 +54,81 @@ func installSignalHandlers(_ shutdown: @escaping () -> Void) -> [DispatchSourceS
         src.resume()
         return src
     }
+}
+
+// MARK: - status
+
+/// Samples the inputs that drive the daemon's decision and prints a
+/// synthetic snapshot. Read-only: never writes the menu-bar pref, never
+/// prompts for Accessibility permission, safe to run while the daemon
+/// is active. The snapshot is independent — it doesn't talk to the
+/// running daemon; it just re-samples the same inputs.
+func runStatus() -> Never {
+    let artifacts = locateArtifacts()
+
+    let frontApp = NSWorkspace.shared.frontmostApplication
+    let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
+    let frontName = frontApp?.localizedName ?? "-"
+    let frontPIDStr = frontPID?.description ?? "-"
+
+    // Fullscreen requires Accessibility. Use the non-prompting check so
+    // `status` has no side effects; report "unknown" if permission is
+    // missing rather than asking for it here.
+    let fullscreen: Bool? = isAccessibilityTrusted()
+        ? isFocusedWindowFullScreen(pid: frontPID?.rawValue)
+        : nil
+
+    let np = fetchNowPlayingOnce(artifacts: artifacts)
+
+    let (decision, reason): (String, String?) = {
+        guard let fullscreen else {
+            return ("unknown", "Accessibility permission not granted — run `houdini` once to prompt")
+        }
+        let shouldHide = shouldHideMenuBar(
+            fullScreen: fullscreen,
+            isPlaying: np?.playing ?? false,
+            frontPID: frontPID,
+            nowPlayingPID: np?.pid,
+        )
+        if shouldHide { return ("HIDE", nil) }
+        return ("SHOW", showReason(frontPID: frontPID, fullscreen: fullscreen, np: np))
+    }()
+
+    let fsStr = fullscreen.map { $0 ? "yes" : "no" } ?? "unknown"
+    print("front:    \(frontName) (pid=\(frontPIDStr), fullscreen=\(fsStr))")
+    switch np {
+    case .none:
+        print("playing:  (adapter failed)")
+    case let .some(snap) where snap.pid == nil:
+        print("playing:  (nothing)")
+    case let .some(snap):
+        let bundle = snap.bundle ?? "-"
+        let pidStr = snap.pid?.description ?? "-"
+        let playStr = snap.playing ? "yes" : "no"
+        print("playing:  \(bundle) (pid=\(pidStr), playing=\(playStr))")
+    }
+    if let reason {
+        print("decision: \(decision)  (\(reason))")
+    } else {
+        print("decision: \(decision)")
+    }
+    exit(0)
+}
+
+/// Explains why `shouldHide` is false, picking the first unmet
+/// precondition in logical order so the message names something the
+/// user can act on.
+private func showReason(
+    frontPID: FrontmostPID?,
+    fullscreen: Bool,
+    np: NowPlayingSnapshot?,
+) -> String {
+    if frontPID == nil { return "no frontmost app" }
+    if !fullscreen { return "frontmost is not fullscreen" }
+    guard let np else { return "adapter failed — cannot determine Now Playing" }
+    if np.pid == nil { return "nothing is using Now Playing" }
+    if !np.playing { return "the Now Playing source is paused" }
+    return "frontmost and Now Playing are different processes"
 }
 
 // MARK: - version
@@ -145,6 +220,8 @@ func usage() {
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
+      houdini status            Print frontmost/Now-Playing state and the
+                                hide/show decision the daemon would make
       houdini logs <out|err> [--tail N]
                                 Tail out (houdini.log) or err (houdini.err);
                                 run `houdini logs` alone to list streams

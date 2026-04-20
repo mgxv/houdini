@@ -19,17 +19,46 @@ func ensureAccessibilityPermission() {
     }
 }
 
+/// Non-prompting Accessibility trust check. Unlike
+/// `ensureAccessibilityPermission`, this never shows the system prompt
+/// and never exits — it's used by read-only diagnostics like `status`.
+func isAccessibilityTrusted() -> Bool {
+    AXIsProcessTrusted()
+}
+
+/// Latched after the first `AXError.apiDisabled` we observe at runtime,
+/// so the warning is emitted once instead of on every evaluation tick.
+/// All AX calls in houdini run on the main thread, so no lock is needed.
+private var axPermissionLostReported = false
+
+/// Emits a one-time warning if the given AX error signals that the
+/// process is no longer trusted. Only `.apiDisabled` indicates
+/// revocation — other failures (windowless apps, unresponsive targets,
+/// unsupported attributes) are normal and must not trigger the warning.
+private func noteAXError(_ error: AXError) {
+    guard error == .apiDisabled, !axPermissionLostReported else { return }
+    axPermissionLostReported = true
+    warn("""
+    Accessibility permission appears to have been revoked; fullscreen detection is disabled.
+    Re-grant in System Settings → Privacy & Security → Accessibility, then run:
+      brew services restart houdini
+    """)
+}
+
 /// The currently focused window of the given process, if any.
 /// Accepts `pid_t?` so callers that don't have a frontmost app can
 /// pass nil and get nil back without a local guard.
 func focusedWindow(of pid: pid_t?) -> AXUIElement? {
     guard let pid, pid > 0 else { return nil }
     var ref: AnyObject?
-    guard AXUIElementCopyAttributeValue(
+    let status = AXUIElementCopyAttributeValue(
         AXUIElementCreateApplication(pid),
         kAXFocusedWindowAttribute as CFString, &ref,
-    ) == .success,
-        let w = ref else { return nil }
+    )
+    guard status == .success, let w = ref else {
+        noteAXError(status)
+        return nil
+    }
     // AXUIElementCopyAttributeValue returns a CoreFoundation type and
     // the compiler guarantees this downcast always succeeds for CF types.
     return (w as! AXUIElement)
@@ -94,7 +123,11 @@ final class AXWatcher {
             me.onChange()
         }
         var newObs: AXObserver?
-        guard AXObserverCreate(pid, callback, &newObs) == .success else { return nil }
+        let status = AXObserverCreate(pid, callback, &newObs)
+        guard status == .success else {
+            noteAXError(status)
+            return nil
+        }
         return newObs
     }
 
@@ -124,9 +157,12 @@ final class AXWatcher {
 func isFocusedWindowFullScreen(pid: pid_t?) -> Bool {
     guard let window = focusedWindow(of: pid) else { return false }
     var ref: AnyObject?
-    guard AXUIElementCopyAttributeValue(
+    let status = AXUIElementCopyAttributeValue(
         window, "AXFullScreen" as CFString, &ref,
-    ) == .success,
-        let value = ref as? Bool else { return false }
+    )
+    guard status == .success, let value = ref as? Bool else {
+        noteAXError(status)
+        return false
+    }
     return value
 }

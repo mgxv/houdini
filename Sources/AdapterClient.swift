@@ -1,7 +1,13 @@
-// Spawns `/usr/bin/perl …/mediaremote-adapter.pl stream` (perl is on
-// Apple's MediaRemote allowlist; an unentitled Swift binary isn't) and
-// parses the newline-delimited JSON it streams to stdout. Each "data"
-// event is handed to the controller on the main queue.
+// `AdapterClient` spawns `/usr/bin/perl …/mediaremote-adapter.pl
+// stream` (perl is on Apple's MediaRemote allowlist; an unentitled
+// Swift binary isn't) and parses the newline-delimited JSON it
+// streams to stdout. Each "data" event is handed to the controller on
+// the main queue. Anything the subprocess writes to stderr is
+// forwarded line-by-line to the parent's stderr, tagged `[adapter]`
+// so it's distinguishable from houdini's own warnings.
+//
+// `fetchNowPlayingOnce` at the bottom of the file runs the adapter in
+// one-shot `get` mode for the `status` subcommand.
 
 import Foundation
 
@@ -20,7 +26,9 @@ final class AdapterClient {
 
     private let process = Process()
     private let stdoutPipe = Pipe()
-    private var buffer = Data()
+    private let stderrPipe = Pipe()
+    private var stdoutBuffer = Data()
+    private var stderrBuffer = Data()
     private var stopping = false
     private let onUpdate: UpdateHandler
 
@@ -29,7 +37,7 @@ final class AdapterClient {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
         process.arguments = [artifacts.scriptPath, artifacts.frameworkPath] + Self.streamArgs
         process.standardOutput = stdoutPipe
-        process.standardError = FileHandle.standardError
+        process.standardError = stderrPipe
     }
 
     func start() throws {
@@ -40,7 +48,10 @@ final class AdapterClient {
             }
         }
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.ingest(handle.availableData)
+            self?.ingestStdout(handle.availableData)
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            self?.ingestStderr(handle.availableData)
         }
         try process.run()
     }
@@ -51,18 +62,39 @@ final class AdapterClient {
     }
 
     /// Accumulates a stdout chunk and flushes any complete (newline-
-    /// terminated) lines to `handleLine`.
-    private func ingest(_ chunk: Data) {
+    /// terminated) lines to `handleStdoutLine`.
+    private func ingestStdout(_ chunk: Data) {
+        consumeLines(into: &stdoutBuffer, chunk: chunk) { self.handleStdoutLine($0) }
+    }
+
+    /// Accumulates a stderr chunk and forwards each complete line to
+    /// the parent's stderr, tagged `[adapter]` so it can be
+    /// distinguished from houdini's own warnings.
+    private func ingestStderr(_ chunk: Data) {
+        consumeLines(into: &stderrBuffer, chunk: chunk) { line in
+            let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
+            FileHandle.standardError.write(Data("[adapter] \(text)\n".utf8))
+        }
+    }
+
+    /// Appends a chunk to `buffer` and flushes each complete
+    /// (newline-terminated) line to `handler`. Incomplete trailing
+    /// data stays in the buffer for the next call.
+    private func consumeLines(
+        into buffer: inout Data,
+        chunk: Data,
+        handler: (Data) -> Void,
+    ) {
         if chunk.isEmpty { return }
         buffer.append(chunk)
         while let nl = buffer.firstIndex(of: 0x0A) {
             let line = buffer.subdata(in: 0 ..< nl)
             buffer.removeSubrange(0 ... nl)
-            handleLine(line)
+            handler(line)
         }
     }
 
-    private func handleLine(_ line: Data) {
+    private func handleStdoutLine(_ line: Data) {
         guard !line.isEmpty else { return }
         guard let parsed = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             let preview = String(data: line, encoding: .utf8) ?? "<non-utf8>"
@@ -95,4 +127,66 @@ private struct AdapterEvent {
             .map { NowPlayingPID(pid_t($0)) }
         bundle = payload["bundleIdentifier"] as? String
     }
+}
+
+/// One-shot Now Playing snapshot returned by `fetchNowPlayingOnce`.
+/// `pid == nil` means no app currently owns the Now Playing widget
+/// (the adapter emits the literal JSON `null` in that case).
+struct NowPlayingSnapshot {
+    let playing: Bool
+    let pid: NowPlayingPID?
+    let bundle: String?
+}
+
+/// Synchronously invokes `mediaremote-adapter.pl get` and parses the
+/// result. Blocks the calling thread until the adapter exits. Intended
+/// for the `status` subcommand; the daemon uses the streaming
+/// `AdapterClient` instead.
+///
+/// Note: `get` emits the raw payload dict (or the literal JSON `null`),
+/// not the `{type, payload}` envelope that `stream` uses.
+///
+/// Returns nil on spawn or parse failure (a `warn()` is emitted first).
+/// Returns `NowPlayingSnapshot(playing: false, pid: nil, bundle: nil)`
+/// when no app currently owns Now Playing.
+func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+    process.arguments = [artifacts.scriptPath, artifacts.frameworkPath, "get"]
+    let stdoutPipe = Pipe()
+    process.standardOutput = stdoutPipe
+    process.standardError = FileHandle.standardError
+
+    do {
+        try process.run()
+    } catch {
+        warn("failed to launch mediaremote-adapter: \(error)")
+        return nil
+    }
+    // Read before waiting: `get` output can exceed the pipe buffer
+    // when it includes artworkData. readDataToEndOfFile blocks until
+    // the adapter closes stdout at exit.
+    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        warn("mediaremote-adapter exited with status \(process.terminationStatus)")
+        return nil
+    }
+
+    let trimmed = (String(data: data, encoding: .utf8) ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty || trimmed == "null" {
+        return NowPlayingSnapshot(playing: false, pid: nil, bundle: nil)
+    }
+    guard let jsonData = trimmed.data(using: .utf8),
+          let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+    else {
+        warn("could not parse adapter get output: \(trimmed)")
+        return nil
+    }
+    return NowPlayingSnapshot(
+        playing: (parsed["playing"] as? Bool) ?? false,
+        pid: (parsed["processIdentifier"] as? Int).map { NowPlayingPID(pid_t($0)) },
+        bundle: parsed["bundleIdentifier"] as? String,
+    )
 }

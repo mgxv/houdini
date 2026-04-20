@@ -4,6 +4,26 @@
 
 import Cocoa
 
+/// Hide the menu bar iff the frontmost app is fullscreen *and* is
+/// itself the source of the current Now Playing track. This is the
+/// single source of truth for the decision — both the daemon's
+/// evaluation loop and the `status` subcommand call it, so they can't
+/// drift apart.
+func shouldHideMenuBar(
+    fullScreen: Bool,
+    isPlaying: Bool,
+    frontPID: FrontmostPID?,
+    nowPlayingPID: NowPlayingPID?,
+) -> Bool {
+    guard fullScreen,
+          isPlaying,
+          let frontPID,
+          let nowPlayingPID,
+          frontPID.isSameProcess(as: nowPlayingPID)
+    else { return false }
+    return true
+}
+
 final class Controller: NSObject {
     /// Immutable view of the inputs that drive the hide/show decision.
     /// `shouldHide` is derived — two snapshots compare equal iff every
@@ -20,16 +40,13 @@ final class Controller: NSObject {
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
 
-        /// Hide the menu bar only when the frontmost app is fullscreen
-        /// *and* is itself the source of the current Now Playing track.
         var shouldHide: Bool {
-            guard fullScreen,
-                  isPlaying,
-                  let frontPID,
-                  let nowPlayingPID,
-                  frontPID.isSameProcess(as: nowPlayingPID)
-            else { return false }
-            return true
+            shouldHideMenuBar(
+                fullScreen: fullScreen,
+                isPlaying: isPlaying,
+                frontPID: frontPID,
+                nowPlayingPID: nowPlayingPID,
+            )
         }
     }
 
