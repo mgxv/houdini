@@ -1,6 +1,7 @@
 ### houdini build outputs ###
 /houdini
 /MediaRemoteAdapter.framework/
+/Sources/Version.swift
 
 ### JetBrains ###
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider

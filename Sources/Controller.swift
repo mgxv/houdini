@@ -32,7 +32,7 @@ final class Controller: NSObject {
         return f
     }()
 
-    private let menuBar: MenuBarToggler?
+    private let menuBar: MenuBarToggler
     private var isPlaying = false
     private var nowPlayingPID: pid_t = 0
     private var nowPlayingBundle: String?
@@ -42,7 +42,7 @@ final class Controller: NSObject {
         self?.evaluate()
     }
 
-    init(menuBar: MenuBarToggler?) {
+    init(menuBar: MenuBarToggler) {
         self.menuBar = menuBar
         super.init()
     }
@@ -74,7 +74,7 @@ final class Controller: NSObject {
         guard snap != lastSnapshot else { return }
         lastSnapshot = snap
 
-        menuBar?.apply(shouldHide: snap.shouldHide)
+        menuBar.apply(shouldHide: snap.shouldHide)
         logSnapshot(snap)
     }
 

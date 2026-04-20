@@ -3,16 +3,19 @@
 
 import Foundation
 
-let cmd = CommandLine.arguments.dropFirst().first ?? ""
+let args = Array(CommandLine.arguments.dropFirst())
+let cmd = args.first ?? ""
 
 switch cmd {
 case "help", "--help", "-h":
     usage()
     exit(0)
+case "version", "--version", "-v":
+    runVersion()
+case "logs":
+    runLogs(args: Array(args.dropFirst()))
 case "":
-    runForeground(dryRun: false)
-case "--dry-run":
-    runForeground(dryRun: true)
+    runForeground()
 default:
     die("unknown command '\(cmd)' — try: houdini help")
 }
