@@ -20,8 +20,6 @@ class Houdini < Formula
   service do
     run opt_bin/"houdini"
     keep_alive true
-    log_path var/"log/houdini.log"
-    error_log_path var/"log/houdini.err"
   end
 
   def caveats

@@ -42,7 +42,7 @@ brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 ```
 
-Logs stream to `/opt/homebrew/var/log/houdini.log` (and `.err` for errors).
+Logs go to the macOS unified log under subsystem `com.github.mgxv.houdini`. Stream them with `houdini logs` or view in Console.app.
 
 Running the binary directly `houdini` is useful for debugging; `brew services` is the normal path.
 
@@ -51,8 +51,8 @@ Running the binary directly `houdini` is useful for debugging; `brew services` i
 ```bash
 houdini status                    # print frontmost / Now-Playing state and the
                                   # hide/show decision the daemon would make
-houdini logs <out|err>            # stream new lines from houdini.log (out)
-                                  # or houdini.err (err)
+houdini logs                      # stream houdini's unified-log entries
+                                  # (wraps `log stream --predicate …`)
 houdini version                   # print version
 houdini help                      # full usage
 ```
@@ -91,7 +91,7 @@ Common reasons:
 
 ### Accessibility permission
 
-If you revoke Accessibility while the daemon is running, `houdini.err` will contain:
+If you revoke Accessibility while the daemon is running, `houdini logs` will show:
 
 ```
 houdini: Accessibility permission appears to have been revoked; fullscreen detection is disabled.
@@ -114,14 +114,22 @@ pkill -f mediaremote-adapter       # kill any orphan Perl subprocesses
 brew services start houdini
 ```
 
-### Log files
+### Logs
 
-- `/opt/homebrew/var/log/houdini.log` — HIDE/SHOW decisions with timestamps
-- `/opt/homebrew/var/log/houdini.err` — errors; output from the subprocess is prefixed `[adapter]` so it's distinguishable from houdini's own warnings
+Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`:
 
-Each file is capped at 500 KB: on daemon startup, if either is larger, it's truncated in place (no rotated archive). This keeps disk usage bounded without external tooling like `newsyslog`.
+- `controller` category — HIDE/SHOW decisions (at `info` level)
+- `adapter` category — output from the mediaremote-adapter subprocess (at `debug`; add `--level debug` to `log stream` to see it)
+- `general` category — startup/shutdown notices, warnings, errors
 
-Stream either via `houdini logs out` or `houdini logs err` — that command handles the Apple Silicon vs Intel Homebrew path automatically and prints new lines as they're written.
+The system handles retention and rotation — no files on disk to manage.
+
+```bash
+houdini logs                                              # live stream
+log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
+```
+
+Or open Console.app and filter on subsystem `com.github.mgxv.houdini`.
 
 
 ## Project layout

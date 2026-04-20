@@ -10,7 +10,6 @@ import Foundation
 /// Runs the daemon loop. Intended to be invoked by launchd via
 /// `brew services`; runs fine in a terminal for local debugging too.
 func runForeground() {
-    rotateLogsIfNeeded()
     ensureAccessibilityPermission()
     let artifacts = locateArtifacts()
 
@@ -18,6 +17,17 @@ func runForeground() {
     menuBar.resetToVisible()
 
     let controller = Controller(menuBar: menuBar)
+
+    // Seed the controller with a one-shot Now Playing snapshot before
+    // starting it, so the first logged evaluation reflects the real
+    // current state rather than "playing=false nowPlaying=-" from
+    // before the streaming adapter has delivered its first event.
+    // If the one-shot fails, we skip priming and the initial line just
+    // shows empty Now Playing state — not worth aborting startup over.
+    if let np = fetchNowPlayingOnce(artifacts: artifacts) {
+        controller.updateMedia(playing: np.playing, pid: np.pid, bundle: np.bundle)
+    }
+
     let adapter = AdapterClient(
         artifacts: artifacts,
         onUpdate: controller.updateMedia,
@@ -35,6 +45,7 @@ func runForeground() {
         adapter.stop()
     }
 
+    Log.general.notice("houdini \(houdiniVersion, privacy: .public) running")
     print("houdini running. Press Ctrl-C to quit.")
     withExtendedLifetime(signalSources) {
         RunLoop.main.run()
@@ -48,6 +59,7 @@ func installSignalHandlers(_ shutdown: @escaping () -> Void) -> [DispatchSourceS
         signal(sig, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
         src.setEventHandler {
+            Log.general.notice("houdini stopping")
             print("\nhoudini stopping…")
             shutdown()
             exit(0)
@@ -141,62 +153,31 @@ func runVersion() -> Never {
 
 // MARK: - logs
 
-/// Streams new lines appended to a log file written by `brew services`.
-/// First positional arg selects the stream ("out" or "err"); running
-/// `houdini logs` with no arg prints the available streams instead of
-/// picking a default. No history is printed — only lines that arrive
-/// after the command starts.
+/// Streams houdini's entries from the unified log by shelling out to
+/// `/usr/bin/log stream`. `--level info` is required to include the
+/// HIDE/SHOW decisions (which are logged at `.info`); warnings and
+/// errors come through at default level. For history, use `log show`
+/// directly.
 func runLogs(args: [String]) -> Never {
-    // 1. Which stream? `houdini logs` alone lists the choices.
-    guard let stream = args.first else {
-        print("""
-        houdini logs <stream>
-
-        Streams:
-          out    HIDE/SHOW decisions and startup banner (houdini.log)
-          err    Errors, including Accessibility failures (houdini.err)
-        """)
-        exit(0)
+    if let extra = args.first {
+        die("unknown argument for logs: '\(extra)' — try: houdini logs")
     }
 
-    let filename: String
-    switch stream {
-    case "out": filename = "houdini.log"
-    case "err": filename = "houdini.err"
-    default:
-        die("unknown stream '\(stream)' — expected 'out' or 'err'")
-    }
-
-    // 2. Reject any extra flags so typos don't get silently swallowed.
-    if let extra = args.dropFirst().first {
-        die("unknown flag for logs: '\(extra)' — try: houdini logs")
-    }
-
-    // 3. Find the log file. Homebrew writes it under var/log in the
-    //    prefix; check both Apple Silicon and Intel locations.
-    let candidates = homebrewLogCandidates(filename)
-    guard let path = candidates.first(where: FileManager.default.fileExists) else {
-        die("""
-        log file not found. Logs are only written when running under
-        `brew services`; in foreground mode output goes to the terminal.
-
-        Searched:
-          \(candidates.joined(separator: "\n  "))
-        """)
-    }
-
-    // 4. Hand off to `/usr/bin/tail` and exit with its status.
-    //    `-n 0` skips existing content so only new lines stream.
-    let tail = Process()
-    tail.executableURL = URL(fileURLWithPath: "/usr/bin/tail")
-    tail.arguments = ["-n", "0", "-F", path]
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+    proc.arguments = [
+        "stream",
+        "--predicate", "subsystem == \"\(Log.subsystem)\"",
+        "--level", "info",
+        "--style", "compact",
+    ]
     do {
-        try tail.run()
+        try proc.run()
     } catch {
-        die("failed to exec /usr/bin/tail: \(error)")
+        die("failed to exec /usr/bin/log: \(error)")
     }
-    tail.waitUntilExit()
-    exit(tail.terminationStatus)
+    proc.waitUntilExit()
+    exit(proc.terminationStatus)
 }
 
 // MARK: - help
@@ -210,9 +191,8 @@ func usage() {
       houdini                   Run the daemon (invoked by brew services)
       houdini status            Print frontmost/Now-Playing state and the
                                 hide/show decision the daemon would make
-      houdini logs <out|err>    Stream new lines from out (houdini.log) or
-                                err (houdini.err); run `houdini logs` alone
-                                to list streams
+      houdini logs              Stream houdini's unified-log entries
+                                (wraps `log stream --predicate …`)
       houdini version           Print version
       houdini help              Print this help
 

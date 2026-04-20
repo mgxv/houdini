@@ -50,12 +50,6 @@ final class Controller: NSObject {
         }
     }
 
-    private let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
-    }()
-
     private let menuBar: MenuBarToggler
     private var isPlaying: Bool = false
     private var nowPlayingPID: NowPlayingPID?
@@ -123,17 +117,15 @@ final class Controller: NSObject {
 
     private func logSnapshot(_ snap: Snapshot) {
         let label = snap.shouldHide ? "HIDE" : "SHOW"
-        let ts = timeFormatter.string(from: Date())
         let nowPlaying = nowPlayingBundle ?? "-"
         let frontPIDStr = snap.frontPID?.description ?? "-"
         let nowPlayingPIDStr = snap.nowPlayingPID?.description ?? "-"
-        print(
-            "[\(ts)] \(label)  "
-                + "front=\(snap.frontName)  "
-                + "fullScreen=\(snap.fullScreen)  "
-                + "playing=\(snap.isPlaying)  "
-                + "frontPID=\(frontPIDStr)  "
-                + "nowPlaying=\(nowPlaying)(pid=\(nowPlayingPIDStr))",
-        )
+        let message = "\(label)  "
+            + "front=\(snap.frontName)  "
+            + "fullScreen=\(snap.fullScreen)  "
+            + "playing=\(snap.isPlaying)  "
+            + "frontPID=\(frontPIDStr)  "
+            + "nowPlaying=\(nowPlaying)(pid=\(nowPlayingPIDStr))"
+        Log.controller.info("\(message, privacy: .public)")
     }
 }

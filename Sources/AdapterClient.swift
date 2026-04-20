@@ -3,8 +3,9 @@
 // Swift binary isn't) and parses the newline-delimited JSON it
 // streams to stdout. Each "data" event is handed to the controller on
 // the main queue. Anything the subprocess writes to stderr is
-// forwarded line-by-line to the parent's stderr, tagged `[adapter]`
-// so it's distinguishable from houdini's own warnings.
+// forwarded line-by-line to the unified log under the "adapter"
+// category, so it's distinguishable from houdini's own warnings
+// without needing a stream-specific prefix.
 //
 // `fetchNowPlayingOnce` at the bottom of the file runs the adapter in
 // one-shot `get` mode for the `status` subcommand.
@@ -68,12 +69,15 @@ final class AdapterClient {
     }
 
     /// Accumulates a stderr chunk and forwards each complete line to
-    /// the parent's stderr, tagged `[adapter]` so it can be
-    /// distinguished from houdini's own warnings.
+    /// the unified log under the "adapter" category at `.debug` level,
+    /// so the default `houdini logs` stream stays focused on decisions
+    /// and warnings. Surface it with `houdini logs --level debug` (or
+    /// the equivalent `log stream` invocation) when diagnosing the
+    /// subprocess.
     private func ingestStderr(_ chunk: Data) {
         consumeLines(into: &stderrBuffer, chunk: chunk) { line in
             let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
-            FileHandle.standardError.write(Data("[adapter] \(text)\n".utf8))
+            Log.adapter.debug("\(text, privacy: .public)")
         }
     }
 
