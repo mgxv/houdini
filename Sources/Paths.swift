@@ -25,7 +25,10 @@ func locateArtifacts() -> AdapterArtifacts {
     guard let exec = Bundle.main.executableURL else {
         die("could not determine binary path (Bundle.main.executableURL is nil)")
     }
-    let binDir = exec.deletingLastPathComponent()
+    // Resolve symlinks so that invocations through Homebrew's
+    // /opt/homebrew/bin/houdini shim land inside the Cellar keg, where
+    // the sibling libexec/houdini/ actually lives.
+    let binDir = exec.resolvingSymlinksInPath().deletingLastPathComponent()
 
     var candidates: [URL] = []
     if let override = ProcessInfo.processInfo.environment["HOUDINI_LIBEXEC"],
