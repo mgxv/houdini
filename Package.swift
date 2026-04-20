@@ -17,7 +17,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "houdini",
-            path: "Sources"
-        )
-    ]
+            path: "Sources",
+        ),
+    ],
 )
