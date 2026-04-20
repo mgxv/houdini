@@ -46,15 +46,6 @@ Logs stream to `/opt/homebrew/var/log/houdini.log` (and `.err` for errors).
 
 Running the binary directly (`houdini` or `houdini --dry-run`) is useful for debugging; `brew services` is the normal path.
 
-## Build from source
-
-```bash
-git clone https://github.com/mgxv/houdini && cd houdini
-./build.sh
-./houdini
-```
-
-Requires macOS 15+, Xcode command-line tools, and Swift 5.10 or newer.
 
 ## Project layout
 
