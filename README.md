@@ -44,7 +44,7 @@ brew services info    houdini     # state, PID, plist path
 
 Logs stream to `/opt/homebrew/var/log/houdini.log` (and `.err` for errors).
 
-Running the binary directly (`houdini` or `houdini --dry-run`) is useful for debugging; `brew services` is the normal path.
+Running the binary directly `houdini` is useful for debugging; `brew services` is the normal path.
 
 
 ## Project layout
