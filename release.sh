@@ -2,11 +2,15 @@
 # release.sh — automate the release flow:
 #
 #   1. Sanity-build with ./build.sh (skip with --skip-build)
-#   2. Write $NEW_VERSION to VERSION; commit + push main
-#   3. Tag vX.Y.Z; push tag
-#   4. Fetch GitHub's source tarball for the tag; compute sha256
-#   5. Rewrite url + sha256 in Formula/houdini.rb
-#   6. Commit + push the formula update
+#   2. Write $NEW_VERSION to VERSION; commit + push main (this repo)
+#   3. Tag vX.Y.Z; push tag (this repo; publishes the GitHub tarball)
+#   4. Fetch the tarball; compute sha256
+#   5. Rewrite url + sha256 in mgxv/homebrew-houdini Formula/houdini.rb
+#   6. Commit + push the tap formula update
+#
+# The tap repo (mgxv/homebrew-houdini) is what `brew install` reads.
+# Clone it as a sibling of this repo (default: $PROJECT_ROOT/../homebrew-houdini)
+# or set HOUDINI_TAP to its path.
 #
 # Usage:
 #   ./release.sh 0.3.0
@@ -20,9 +24,9 @@
 #   3. Error handling  — stage tracking + ERR trap
 #   4. Arguments       — flag + positional parsing
 #   5. Configuration   — derived paths, URLs, constants
-#   6. Preflight       — tools, git state, version, tag, formula shape
+#   6. Preflight       — tools, git state (both repos), version, tag, formula shape
 #   7. Confirm         — plan + interactive confirmation
-#   8. Release steps   — build → version → tag → sha → formula
+#   8. Release steps   — build → version+tag (source) → sha → tap formula
 #   9. Summary         — final output
 
 # ---------------------------------------------------------------------------
@@ -59,6 +63,10 @@ Options:
   --skip-build   Skip ./build.sh sanity check before releasing.
   -h, --help     Show this message.
 
+Env:
+  HOUDINI_TAP    Path to the mgxv/homebrew-houdini clone.
+                 Default: \$PROJECT_ROOT/../homebrew-houdini
+
 Example:
   $SCRIPT_NAME 0.3.0
 USAGE
@@ -75,6 +83,8 @@ USAGE
 STAGE="initializing"
 TAG=""
 TARBALL_URL=""
+TAP_DIR=""
+TAP_BRANCH=""
 
 on_err() {
     local lineno="$1"
@@ -86,15 +96,17 @@ on_err() {
         pushing_tag)
             printf "    tag %s exists locally but push failed. Retry with: git push origin %s\n" "$TAG" "$TAG" >&2
             ;;
-        computing_sha|rewriting_formula|committing_formula)
-            printf "    tag %s is already published on origin. To finish by hand:\n" "$TAG" >&2
+        computing_sha|rewriting_tap_formula|committing_tap_formula)
+            printf "    tag %s is already published. To finish by hand:\n" "$TAG" >&2
             printf "      1. SHA=\"\$(curl -fsSL %s | shasum -a 256 | awk '{print \$1}')\"\n" "$TARBALL_URL" >&2
-            printf "      2. Update url + sha256 in Formula/houdini.rb\n" >&2
-            printf "      3. git add Formula/houdini.rb && git commit -m 'houdini %s' && git push origin main\n" "${TAG#v}" >&2
+            printf "      2. Update url + sha256 in %s/Formula/houdini.rb\n" "$TAP_DIR" >&2
+            printf "      3. (cd %s && git add Formula/houdini.rb && git commit -m 'houdini %s' && git push origin %s)\n" \
+                "$TAP_DIR" "${TAG#v}" "$TAP_BRANCH" >&2
             printf "    Or unpublish and re-run: git push --delete origin %s && git tag -d %s\n" "$TAG" "$TAG" >&2
             ;;
-        pushing_formula)
-            printf "    local formula commit exists but push failed. Retry with: git push origin main\n" >&2
+        pushing_tap_formula)
+            printf "    tap commit exists locally but push failed. Retry with:\n" >&2
+            printf "      (cd %s && git push origin %s)\n" "$TAP_DIR" "$TAP_BRANCH" >&2
             ;;
     esac
     exit 1
@@ -131,7 +143,8 @@ NEW_VERSION="$1"
 # ---------------------------------------------------------------------------
 
 TAG="v$NEW_VERSION"
-FORMULA="$PROJECT_ROOT/Formula/houdini.rb"
+TAP_DIR="${HOUDINI_TAP:-$PROJECT_ROOT/../homebrew-houdini}"
+TAP_FORMULA="$TAP_DIR/Formula/houdini.rb"
 TARBALL_URL="https://github.com/mgxv/houdini/archive/refs/tags/$TAG.tar.gz"
 
 # SHA-256 of an empty input — if the tarball fetch returns nothing, we
@@ -148,14 +161,16 @@ step "Checking prerequisites"
 for tool in git curl shasum sed awk grep sort; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
-[ -f "$FORMULA" ] || die "$FORMULA missing"
-[ -f VERSION ]    || die "VERSION missing"
-[ -x ./build.sh ] || die "./build.sh missing or not executable"
-ok "tools + files present"
+[ -d "$TAP_DIR/.git" ] \
+    || die "tap repo not found at $TAP_DIR — clone mgxv/homebrew-houdini there or set HOUDINI_TAP"
+[ -f "$TAP_FORMULA" ] || die "tap formula missing: $TAP_FORMULA"
+[ -f VERSION ]        || die "VERSION missing"
+[ -x ./build.sh ]     || die "./build.sh missing or not executable"
+ok "tools + files present (tap at $TAP_DIR)"
 
-# 6b. Git state
-STAGE="preflight: git state"
-step "Checking git state"
+# 6b. Git state — this repo
+STAGE="preflight: git state (source)"
+step "Checking git state (this repo)"
 git remote get-url origin >/dev/null 2>&1 \
     || die "no 'origin' remote configured"
 [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] \
@@ -167,7 +182,20 @@ git fetch --quiet origin main
     || die "local main is not aligned with origin/main — pull or push first"
 ok "on main, clean, aligned with origin"
 
-# 6c. Version + tag
+# 6c. Git state — tap
+STAGE="preflight: git state (tap)"
+step "Checking git state (tap)"
+(cd "$TAP_DIR" && git remote get-url origin >/dev/null 2>&1) \
+    || die "tap has no 'origin' remote"
+TAP_BRANCH="$(cd "$TAP_DIR" && git rev-parse --abbrev-ref HEAD)"
+(cd "$TAP_DIR" && git diff-index --quiet HEAD --) \
+    || die "tap working tree has uncommitted changes"
+(cd "$TAP_DIR" && git fetch --quiet origin "$TAP_BRANCH")
+[ "$(cd "$TAP_DIR" && git rev-parse HEAD)" = "$(cd "$TAP_DIR" && git rev-parse "origin/$TAP_BRANCH")" ] \
+    || die "tap $TAP_BRANCH is not aligned with origin/$TAP_BRANCH — pull or push first"
+ok "tap on $TAP_BRANCH, clean, aligned with origin"
+
+# 6d. Version + tag
 STAGE="preflight: version + tag"
 step "Checking version + tag"
 CURRENT_VERSION="$(tr -d '[:space:]' < VERSION)"
@@ -185,16 +213,16 @@ fi
     || die "tag $TAG already exists on origin"
 ok "$CURRENT_VERSION → $NEW_VERSION; tag $TAG is free"
 
-# 6d. Formula shape
+# 6e. Tap formula shape
 STAGE="preflight: formula shape"
-step "Checking formula shape"
-grep -qE '/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' "$FORMULA" \
-    || die "$FORMULA has no recognizable /vX.Y.Z.tar.gz URL pattern"
-grep -qE 'sha256 "[^"]+"' "$FORMULA" \
-    || die "$FORMULA has no recognizable sha256 \"...\" line"
+step "Checking tap formula shape"
+grep -qE '/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' "$TAP_FORMULA" \
+    || die "$TAP_FORMULA has no recognizable /vX.Y.Z.tar.gz URL pattern"
+grep -qE 'sha256 "[^"]+"' "$TAP_FORMULA" \
+    || die "$TAP_FORMULA has no recognizable sha256 \"...\" line"
 ok "url + sha256 lines found"
 
-# 6e. Interactivity
+# 6f. Interactivity
 STAGE="preflight: interactivity"
 if [ $YES -eq 0 ] && [ ! -t 0 ]; then
     die "non-interactive shell — pass --yes to skip confirmation"
@@ -208,11 +236,11 @@ cat <<PLAN
 
 ${B}Plan${N}
   1. $( [ $SKIP_BUILD -eq 1 ] && echo "(skipped) ")Sanity-build with ./build.sh
-  2. Bump VERSION → commit "houdini $NEW_VERSION" → push main
-  3. Tag $TAG → push tag
+  2. Bump VERSION → commit "houdini $NEW_VERSION" → push main (this repo)
+  3. Tag $TAG → push tag (this repo)
   4. Fetch $TARBALL_URL, compute sha256
-  5. Rewrite url + sha256 in Formula/houdini.rb
-  6. Commit "houdini $NEW_VERSION" → push main
+  5. Rewrite url + sha256 in $TAP_FORMULA
+  6. Commit "houdini $NEW_VERSION" in tap → push $TAP_BRANCH
 
 PLAN
 
@@ -235,7 +263,7 @@ else
     note "sanity build skipped"
 fi
 
-# 8b. Bump VERSION → commit → push
+# 8b. Bump VERSION → commit → push (this repo)
 STAGE="bumping_version"
 step "Bumping VERSION"
 echo "$NEW_VERSION" > VERSION
@@ -247,7 +275,7 @@ STAGE="pushing_version_commit"
 git push origin main
 ok "pushed main"
 
-# 8c. Tag → push
+# 8c. Tag → push (this repo, publishes the tarball)
 STAGE="tagging"
 step "Tagging $TAG"
 git tag "$TAG"
@@ -273,27 +301,30 @@ trap 'on_err $LINENO' ERR
 [ "$SHA" != "$EMPTY_SHA256" ]  || die "tarball hashed to the empty-input SHA — fetch returned nothing"
 ok "sha256 = $SHA ($TARBALL_BYTES bytes)"
 
-# 8e. Rewrite formula
-STAGE="rewriting_formula"
-step "Rewriting formula"
+# 8e. Rewrite tap formula
+STAGE="rewriting_tap_formula"
+step "Rewriting tap formula"
 sed -i.bak -E \
     -e "s|(/v)[0-9]+\.[0-9]+\.[0-9]+(\.tar\.gz)|\1$NEW_VERSION\2|" \
     -e "s|(sha256 \")[^\"]*(\")|\1$SHA\2|" \
-    "$FORMULA"
-rm "$FORMULA.bak"
-grep -q "v$NEW_VERSION.tar.gz" "$FORMULA" || die "url rewrite did not take effect"
-grep -q "sha256 \"$SHA\""      "$FORMULA" || die "sha256 rewrite did not take effect"
+    "$TAP_FORMULA"
+rm "$TAP_FORMULA.bak"
+grep -q "v$NEW_VERSION.tar.gz" "$TAP_FORMULA" || die "url rewrite did not take effect"
+grep -q "sha256 \"$SHA\""      "$TAP_FORMULA" || die "sha256 rewrite did not take effect"
 ok "url + sha256 updated"
 
-# 8f. Commit formula → push
-STAGE="committing_formula"
-git add "$FORMULA"
-git commit -m "houdini $NEW_VERSION"
-ok "committed"
+# 8f. Commit tap formula → push
+STAGE="committing_tap_formula"
+(
+    cd "$TAP_DIR"
+    git add Formula/houdini.rb
+    git commit -m "houdini $NEW_VERSION"
+)
+ok "committed in tap"
 
-STAGE="pushing_formula"
-git push origin main
-ok "pushed main"
+STAGE="pushing_tap_formula"
+(cd "$TAP_DIR" && git push origin "$TAP_BRANCH")
+ok "pushed $TAP_BRANCH"
 
 # ---------------------------------------------------------------------------
 # 9. Summary
@@ -304,3 +335,4 @@ printf "\n%shoudini %s released.%s\n" "$B" "$NEW_VERSION" "$N"
 printf "    tag:      %s\n" "$TAG"
 printf "    tarball:  %s\n" "$TARBALL_URL"
 printf "    sha256:   %s\n" "$SHA"
+printf "    tap:      %s @ %s\n" "$TAP_DIR" "$TAP_BRANCH"
