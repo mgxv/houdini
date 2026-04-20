@@ -90,9 +90,9 @@ private struct AdapterEvent {
     init?(from object: [String: Any]) {
         guard (object["type"] as? String) == "data" else { return nil }
         let payload = (object["payload"] as? [String: Any]) ?? [:]
-        self.playing = (payload["playing"] as? Bool) ?? false
-        self.pid = (payload["processIdentifier"] as? Int)
+        playing = (payload["playing"] as? Bool) ?? false
+        pid = (payload["processIdentifier"] as? Int)
             .map { NowPlayingPID(pid_t($0)) }
-        self.bundle = payload["bundleIdentifier"] as? String
+        bundle = payload["bundleIdentifier"] as? String
     }
 }

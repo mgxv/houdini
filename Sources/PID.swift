@@ -12,14 +12,18 @@ import Foundation
 /// PID of the frontmost (focused) application.
 struct FrontmostPID: Hashable {
     let rawValue: pid_t
-    init(_ rawValue: pid_t) { self.rawValue = rawValue }
+    init(_ rawValue: pid_t) {
+        self.rawValue = rawValue
+    }
 }
 
 /// PID of the application currently owning the system Now Playing
 /// widget (i.e. the media source).
 struct NowPlayingPID: Hashable {
     let rawValue: pid_t
-    init(_ rawValue: pid_t) { self.rawValue = rawValue }
+    init(_ rawValue: pid_t) {
+        self.rawValue = rawValue
+    }
 }
 
 extension FrontmostPID {
@@ -32,9 +36,13 @@ extension FrontmostPID {
 }
 
 extension FrontmostPID: CustomStringConvertible {
-    var description: String { String(rawValue) }
+    var description: String {
+        String(rawValue)
+    }
 }
 
 extension NowPlayingPID: CustomStringConvertible {
-    var description: String { String(rawValue) }
+    var description: String {
+        String(rawValue)
+    }
 }

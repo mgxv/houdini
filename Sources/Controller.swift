@@ -41,9 +41,9 @@ final class Controller: NSObject {
 
     private let menuBar: MenuBarToggler
     private var isPlaying: Bool = false
-    private var nowPlayingPID: NowPlayingPID? = nil
-    private var nowPlayingBundle: String? = nil
-    private var lastSnapshot: Snapshot? = nil
+    private var nowPlayingPID: NowPlayingPID?
+    private var nowPlayingBundle: String?
+    private var lastSnapshot: Snapshot?
 
     private lazy var axWatcher = AXWatcher { [weak self] in
         self?.evaluate()
