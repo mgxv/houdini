@@ -51,7 +51,7 @@ Running the binary directly (`houdini` or `houdini --dry-run`) is useful for deb
 ```bash
 git clone https://github.com/mgxv/houdini && cd houdini
 ./build.sh
-./houdini --dry-run
+./houdini
 ```
 
 Requires macOS 15+, Xcode command-line tools, and Swift 5.10 or newer.
