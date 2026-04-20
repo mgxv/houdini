@@ -20,8 +20,10 @@ func ensureAccessibilityPermission() {
 }
 
 /// The currently focused window of the given process, if any.
-func focusedWindow(of pid: pid_t) -> AXUIElement? {
-    guard pid > 0 else { return nil }
+/// Accepts `pid_t?` so callers that don't have a frontmost app can
+/// pass nil and get nil back without a local guard.
+func focusedWindow(of pid: pid_t?) -> AXUIElement? {
+    guard let pid, pid > 0 else { return nil }
     var ref: AnyObject?
     guard AXUIElementCopyAttributeValue(
         AXUIElementCreateApplication(pid),
@@ -45,8 +47,10 @@ final class AXWatcher {
         self.onChange = onChange
     }
 
-    func attach(pid: pid_t) {
-        guard pid > 0 else { detach(); return }
+    /// Subscribe to focus/resize/move events for the given process.
+    /// Passing nil (or any invalid PID) detaches instead.
+    func attach(pid: pid_t?) {
+        guard let pid, pid > 0 else { detach(); return }
         guard pid != attachedPID else { return }
         detach()
 
@@ -115,9 +119,9 @@ final class AXWatcher {
 
 /// Whether the focused window of the given process is in native
 /// fullscreen. Reads the undocumented but stable `AXFullScreen`
-/// attribute. Returns false if the PID is invalid, has no focused
-/// window, or the attribute isn't available.
-func isFocusedWindowFullScreen(pid: pid_t) -> Bool {
+/// attribute. Returns false for nil/invalid PIDs, apps with no focused
+/// window, or when the attribute isn't available.
+func isFocusedWindowFullScreen(pid: pid_t?) -> Bool {
     guard let window = focusedWindow(of: pid) else { return false }
     var ref: AnyObject?
     guard AXUIElementCopyAttributeValue(

@@ -11,15 +11,14 @@ import Foundation
 /// `brew services`; runs fine in a terminal for local debugging too.
 func runForeground() {
     ensureAccessibilityPermission()
-    let (scriptPath, frameworkPath) = locateArtifacts()
+    let artifacts = locateArtifacts()
 
     let menuBar = MenuBarToggler()
     menuBar.resetToVisible()
 
     let controller = Controller(menuBar: menuBar)
     let adapter = AdapterClient(
-        scriptPath: scriptPath,
-        frameworkPath: frameworkPath,
+        artifacts: artifacts,
         onUpdate: controller.updateMedia,
     )
 

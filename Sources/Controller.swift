@@ -5,24 +5,31 @@
 import Cocoa
 
 final class Controller: NSObject {
-    /// Immutable view of the three inputs that drive the hide/show
-    /// decision. `shouldHide` is derived — two snapshots compare equal
-    /// iff every input matches, so Equatable avoids redundant writes
-    /// without caching the decision itself.
+    /// Immutable view of the inputs that drive the hide/show decision.
+    /// `shouldHide` is derived — two snapshots compare equal iff every
+    /// input matches, so Equatable avoids redundant writes without
+    /// caching the decision itself.
+    ///
+    /// `frontPID` and `nowPlayingPID` are distinct types (not just
+    /// distinct values) so the compiler blocks accidentally swapping
+    /// them.
     private struct Snapshot: Equatable {
-        let frontPID: pid_t
+        let frontPID: FrontmostPID?
         let frontName: String
         let fullScreen: Bool
         let isPlaying: Bool
-        let nowPlayingPID: pid_t
+        let nowPlayingPID: NowPlayingPID?
 
         /// Hide the menu bar only when the frontmost app is fullscreen
         /// *and* is itself the source of the current Now Playing track.
         var shouldHide: Bool {
-            fullScreen
-                && isPlaying
-                && frontPID != 0
-                && frontPID == nowPlayingPID
+            guard fullScreen,
+                  isPlaying,
+                  let frontPID,
+                  let nowPlayingPID,
+                  frontPID.isSameProcess(as: nowPlayingPID)
+            else { return false }
+            return true
         }
     }
 
@@ -33,10 +40,10 @@ final class Controller: NSObject {
     }()
 
     private let menuBar: MenuBarToggler
-    private var isPlaying = false
-    private var nowPlayingPID: pid_t = 0
-    private var nowPlayingBundle: String?
-    private var lastSnapshot: Snapshot?
+    private var isPlaying: Bool = false
+    private var nowPlayingPID: NowPlayingPID? = nil
+    private var nowPlayingBundle: String? = nil
+    private var lastSnapshot: Snapshot? = nil
 
     private lazy var axWatcher = AXWatcher { [weak self] in
         self?.evaluate()
@@ -62,7 +69,8 @@ final class Controller: NSObject {
     }
 
     /// Called by AdapterClient whenever the Now Playing state changes.
-    func updateMedia(playing: Bool, pid: pid_t, bundle: String?) {
+    /// `pid` is nil when Now Playing has no current source.
+    func updateMedia(playing: Bool, pid: NowPlayingPID?, bundle: String?) {
         isPlaying = playing
         nowPlayingPID = pid
         nowPlayingBundle = bundle
@@ -83,14 +91,14 @@ final class Controller: NSObject {
     /// tick because the frontmost PID can change at any time.
     private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
-        let frontPID = frontApp?.processIdentifier ?? 0
+        let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let frontName = frontApp?.localizedName ?? "(unknown)"
-        axWatcher.attach(pid: frontPID)
+        axWatcher.attach(pid: frontPID?.rawValue)
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
-            fullScreen: isFocusedWindowFullScreen(pid: frontPID),
+            fullScreen: isFocusedWindowFullScreen(pid: frontPID?.rawValue),
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
         )
@@ -100,13 +108,15 @@ final class Controller: NSObject {
         let label = snap.shouldHide ? "HIDE" : "SHOW"
         let ts = timeFormatter.string(from: Date())
         let nowPlaying = nowPlayingBundle ?? "-"
+        let frontPIDStr = snap.frontPID?.description ?? "-"
+        let nowPlayingPIDStr = snap.nowPlayingPID?.description ?? "-"
         print(
             "[\(ts)] \(label)  "
                 + "front=\(snap.frontName)  "
                 + "fullScreen=\(snap.fullScreen)  "
                 + "playing=\(snap.isPlaying)  "
-                + "frontPID=\(snap.frontPID)  "
-                + "nowPlaying=\(nowPlaying)(pid=\(snap.nowPlayingPID))",
+                + "frontPID=\(frontPIDStr)  "
+                + "nowPlaying=\(nowPlaying)(pid=\(nowPlayingPIDStr))",
         )
     }
 }

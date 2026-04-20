@@ -1,20 +1,22 @@
 // Spawns `/usr/bin/perl …/mediaremote-adapter.pl stream` (perl is on
 // Apple's MediaRemote allowlist; an unentitled Swift binary isn't) and
 // parses the newline-delimited JSON it streams to stdout. Each "data"
-// event is decoded into (playing, pid, bundle) and handed to the
-// controller on the main queue.
+// event is handed to the controller on the main queue.
 
 import Foundation
 
 final class AdapterClient {
-    typealias UpdateHandler = (_ playing: Bool, _ pid: pid_t, _ bundle: String?) -> Void
+    /// Callback delivered on the main queue whenever the adapter emits
+    /// a `data` event. `pid` is nil when Now Playing has no current
+    /// source (i.e. nothing has ever played, or the last source exited).
+    typealias UpdateHandler = (_ playing: Bool, _ pid: NowPlayingPID?, _ bundle: String?) -> Void
 
     /// Adapter `stream` flags:
     /// - `--no-diff` emits full state on every change, so we don't have
     ///    to reconstruct deltas.
     /// - `--debounce=200` collapses bursts (e.g. scrubbing) to at most
     ///    one event per 200 ms.
-    private static let streamArgs = ["stream", "--no-diff", "--debounce=200"]
+    private static let streamArgs: [String] = ["stream", "--no-diff", "--debounce=200"]
 
     private let process = Process()
     private let stdoutPipe = Pipe()
@@ -22,13 +24,10 @@ final class AdapterClient {
     private var stopping = false
     private let onUpdate: UpdateHandler
 
-    init(scriptPath: String,
-         frameworkPath: String,
-         onUpdate: @escaping UpdateHandler)
-    {
+    init(artifacts: AdapterArtifacts, onUpdate: @escaping UpdateHandler) {
         self.onUpdate = onUpdate
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        process.arguments = [scriptPath, frameworkPath] + Self.streamArgs
+        process.arguments = [artifacts.scriptPath, artifacts.frameworkPath] + Self.streamArgs
         process.standardOutput = stdoutPipe
         process.standardError = FileHandle.standardError
     }
@@ -65,17 +64,35 @@ final class AdapterClient {
 
     private func handleLine(_ line: Data) {
         guard !line.isEmpty else { return }
-        guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
-            warn("ignored non-JSON line from adapter: \(String(data: line, encoding: .utf8) ?? "<non-utf8>")")
+        guard let parsed = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+            let preview = String(data: line, encoding: .utf8) ?? "<non-utf8>"
+            warn("ignored non-JSON line from adapter: \(preview)")
             return
         }
-        guard (obj["type"] as? String) == "data" else { return }
+        guard let event = AdapterEvent(from: parsed) else { return }
+        DispatchQueue.main.async {
+            self.onUpdate(event.playing, event.pid, event.bundle)
+        }
+    }
+}
 
-        let payload = (obj["payload"] as? [String: Any]) ?? [:]
-        let playing = (payload["playing"] as? Bool) ?? false
-        let pid = pid_t((payload["processIdentifier"] as? Int) ?? 0)
-        let bundle = payload["bundleIdentifier"] as? String
+/// The fields we extract from an adapter `data` event. Missing or
+/// wrong-typed fields fall back to safe defaults, matching the
+/// behavior of the original dict-based extraction.
+private struct AdapterEvent {
+    let playing: Bool
+    let pid: NowPlayingPID?
+    let bundle: String?
 
-        DispatchQueue.main.async { self.onUpdate(playing, pid, bundle) }
+    /// Extracts a `data` event from the adapter's parsed JSON object.
+    /// Returns nil for any other event type so the caller can silently
+    /// ignore heartbeats, errors, etc.
+    init?(from object: [String: Any]) {
+        guard (object["type"] as? String) == "data" else { return nil }
+        let payload = (object["payload"] as? [String: Any]) ?? [:]
+        self.playing = (payload["playing"] as? Bool) ?? false
+        self.pid = (payload["processIdentifier"] as? Int)
+            .map { NowPlayingPID(pid_t($0)) }
+        self.bundle = payload["bundleIdentifier"] as? String
     }
 }

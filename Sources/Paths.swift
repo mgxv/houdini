@@ -3,6 +3,15 @@
 
 import Foundation
 
+/// Filesystem paths the daemon needs at runtime, resolved by
+/// `locateArtifacts()`.
+struct AdapterArtifacts {
+    /// Absolute path to `mediaremote-adapter.pl`.
+    let scriptPath: String
+    /// Absolute path to `MediaRemoteAdapter.framework`.
+    let frameworkPath: String
+}
+
 /// Resolves the vendored `mediaremote-adapter.pl` and
 /// `MediaRemoteAdapter.framework` paths. Searches, in order:
 ///
@@ -12,7 +21,7 @@ import Foundation
 ///
 /// The first directory that contains *both* artifacts wins. Exits if no
 /// candidate matches.
-func locateArtifacts() -> (script: String, framework: String) {
+func locateArtifacts() -> AdapterArtifacts {
     guard let exec = Bundle.main.executableURL else {
         die("could not determine binary path (Bundle.main.executableURL is nil)")
     }
@@ -35,7 +44,7 @@ func locateArtifacts() -> (script: String, framework: String) {
         ).path
         let framework = dir.appendingPathComponent("MediaRemoteAdapter.framework").path
         if fm.fileExists(atPath: script), fm.fileExists(atPath: framework) {
-            return (script, framework)
+            return AdapterArtifacts(scriptPath: script, frameworkPath: framework)
         }
     }
 
