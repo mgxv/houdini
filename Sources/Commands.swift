@@ -62,14 +62,15 @@ func installSignalHandlers(_ shutdown: @escaping () -> Void) -> [DispatchSourceS
 
 func usage() {
     print("""
-    houdini — auto-hide the macOS menu bar when the frontmost fullscreen
-    app is the same one playing in the system Now Playing widget.
+    houdini — hides the menu bar when the frontmost fullscreen app is
+    the same one playing in the system Now Playing widget.
 
     Usage:
-      houdini [--dry-run]    Run in foreground (--dry-run = log only, no toggle)
+      houdini [--dry-run]    Run in foreground
+                             (--dry-run observes and logs; no menu-bar writes)
       houdini help           Print this help
 
-    Install/autostart is managed via Homebrew:
+    Install and autostart are managed via Homebrew:
       brew services start houdini
       brew services stop houdini
       brew services info houdini

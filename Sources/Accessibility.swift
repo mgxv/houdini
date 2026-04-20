@@ -28,6 +28,8 @@ func focusedWindow(of pid: pid_t) -> AXUIElement? {
         kAXFocusedWindowAttribute as CFString, &ref,
     ) == .success,
         let w = ref else { return nil }
+    // AXUIElementCopyAttributeValue returns a CoreFoundation type and
+    // the compiler guarantees this downcast always succeeds for CF types.
     return (w as! AXUIElement)
 }
 
@@ -112,8 +114,10 @@ final class AXWatcher {
 }
 
 /// Whether the focused window of the given process is in native
-/// fullscreen. Reads the undocumented but stable `AXFullScreen`.
-func isProcessFrontmostFullScreen(pid: pid_t) -> Bool {
+/// fullscreen. Reads the undocumented but stable `AXFullScreen`
+/// attribute. Returns false if the PID is invalid, has no focused
+/// window, or the attribute isn't available.
+func isFocusedWindowFullScreen(pid: pid_t) -> Bool {
     guard let window = focusedWindow(of: pid) else { return false }
     var ref: AnyObject?
     guard AXUIElementCopyAttributeValue(

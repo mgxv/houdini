@@ -5,13 +5,25 @@
 import Cocoa
 
 final class Controller: NSObject {
+    /// Immutable view of the three inputs that drive the hide/show
+    /// decision. `shouldHide` is derived — two snapshots compare equal
+    /// iff every input matches, so Equatable avoids redundant writes
+    /// without caching the decision itself.
     private struct Snapshot: Equatable {
         let frontPID: pid_t
         let frontName: String
         let fullScreen: Bool
         let isPlaying: Bool
         let nowPlayingPID: pid_t
-        let shouldHide: Bool
+
+        /// Hide the menu bar only when the frontmost app is fullscreen
+        /// *and* is itself the source of the current Now Playing track.
+        var shouldHide: Bool {
+            fullScreen
+                && isPlaying
+                && frontPID != 0
+                && frontPID == nowPlayingPID
+        }
     }
 
     private let timeFormatter: DateFormatter = {
@@ -58,7 +70,7 @@ final class Controller: NSObject {
     }
 
     private func evaluate() {
-        let snap = currentSnapshot()
+        let snap = takeSnapshot()
         guard snap != lastSnapshot else { return }
         lastSnapshot = snap
 
@@ -66,23 +78,21 @@ final class Controller: NSObject {
         logSnapshot(snap)
     }
 
-    private func currentSnapshot() -> Snapshot {
+    /// Read the current frontmost app, (re-)subscribe the AX watcher to
+    /// it, and sample its fullscreen state. Called on every evaluation
+    /// tick because the frontmost PID can change at any time.
+    private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontPID = frontApp?.processIdentifier ?? 0
         let frontName = frontApp?.localizedName ?? "(unknown)"
         axWatcher.attach(pid: frontPID)
 
-        let fullScreen = isProcessFrontmostFullScreen(pid: frontPID)
-        let shouldHide =
-            fullScreen
-                && isPlaying
-                && frontPID != 0
-                && frontPID == nowPlayingPID
-
         return Snapshot(
-            frontPID: frontPID, frontName: frontName,
-            fullScreen: fullScreen, isPlaying: isPlaying,
-            nowPlayingPID: nowPlayingPID, shouldHide: shouldHide,
+            frontPID: frontPID,
+            frontName: frontName,
+            fullScreen: isFocusedWindowFullScreen(pid: frontPID),
+            isPlaying: isPlaying,
+            nowPlayingPID: nowPlayingPID,
         )
     }
 
@@ -90,6 +100,13 @@ final class Controller: NSObject {
         let label = snap.shouldHide ? "HIDE" : "SHOW"
         let ts = timeFormatter.string(from: Date())
         let nowPlaying = nowPlayingBundle ?? "-"
-        print("[\(ts)] \(label)  front=\(snap.frontName)  fullScreen=\(snap.fullScreen)  playing=\(snap.isPlaying)  frontPID=\(snap.frontPID)  nowPlaying=\(nowPlaying)(pid=\(snap.nowPlayingPID))")
+        print(
+            "[\(ts)] \(label)  "
+                + "front=\(snap.frontName)  "
+                + "fullScreen=\(snap.fullScreen)  "
+                + "playing=\(snap.isPlaying)  "
+                + "frontPID=\(snap.frontPID)  "
+                + "nowPlaying=\(nowPlaying)(pid=\(snap.nowPlayingPID))",
+        )
     }
 }

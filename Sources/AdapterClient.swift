@@ -9,6 +9,13 @@ import Foundation
 final class AdapterClient {
     typealias UpdateHandler = (_ playing: Bool, _ pid: pid_t, _ bundle: String?) -> Void
 
+    /// Adapter `stream` flags:
+    /// - `--no-diff` emits full state on every change, so we don't have
+    ///    to reconstruct deltas.
+    /// - `--debounce=200` collapses bursts (e.g. scrubbing) to at most
+    ///    one event per 200 ms.
+    private static let streamArgs = ["stream", "--no-diff", "--debounce=200"]
+
     private let process = Process()
     private let stdoutPipe = Pipe()
     private var buffer = Data()
@@ -21,10 +28,7 @@ final class AdapterClient {
     {
         self.onUpdate = onUpdate
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        process.arguments = [
-            scriptPath, frameworkPath,
-            "stream", "--no-diff", "--debounce=200",
-        ]
+        process.arguments = [scriptPath, frameworkPath] + Self.streamArgs
         process.standardOutput = stdoutPipe
         process.standardError = FileHandle.standardError
     }

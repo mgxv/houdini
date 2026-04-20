@@ -1,58 +1,69 @@
 # houdini
 
-A macOS background daemon that auto-hides the menu bar when the frontmost fullscreen app is the one currently playing in the system **Now Playing** widget.
+A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the one currently playing in the system **Now Playing** widget.
 
-Watching a video in fullscreen? The menu bar disappears. Switch to another window, pause, or focus a non-media app? It comes back. No UI, no hotkeys.
+Watching a video in fullscreen? The menu bar disappears. Switch windows, pause, or focus a non-media app? It comes back. No UI, no hotkeys.
+
+## Install
+
+```bash
+# one-time setup
+brew tap mgxv/houdini
+brew install houdini
+
+# or as a single command
+brew install mgxv/houdini/houdini
+```
+
+Then start the service:
+
+```bash
+brew services start houdini
+```
+
+On first start you'll be prompted to grant Accessibility permission. After granting, run `brew services restart houdini` once to pick it up.
 
 ## How it works
 
-houdini fuses two signals:
+houdini hides the menu bar only when **all three** are true:
 
-- **Now Playing state** (play/pause + originating app) via the vendored [mediaremote-adapter](https://github.com/ungive/mediaremote-adapter).
-- **Frontmost fullscreen state** via the macOS Accessibility API.
+1. An app is in native fullscreen
+2. That app is the frontmost (focused) app
+3. That same app is actively playing media via Now Playing
 
-When both point to the same app, it flips the `AppleMenuBarVisibleInFullscreen` system preference and nudges WindowServer to re-apply the policy. When either stops being true, it flips back.
+When any one becomes false, the menu bar comes back.
 
-## Getting started
-
-### Prerequisites
-
-- macOS with Xcode command-line tools (`swiftc`, `clang`, `codesign`)
-- Swift **6.2.3** (pinned in `.swift-version`)
-- Accessibility permission (you'll be prompted on first run)
-
-> **Note:** a minimum supported macOS version isn't declared yet — please flag if you hit a version mismatch.
-
-### Build & install
+## Usage
 
 ```bash
-./build.sh             # Builds MediaRemoteAdapter.framework + the houdini binary
-./houdini install      # Registers a LaunchAgent + symlinks into ~/.local/bin
+brew services start   houdini     # start and enable at login
+brew services stop    houdini     # stop and disable
+brew services restart houdini     # stop + start
+brew services info    houdini     # state, PID, plist path
 ```
 
-After install, houdini runs on login and keeps itself alive via `launchd`.
+Logs stream to `/opt/homebrew/var/log/houdini.log` (and `.err` for errors).
 
-### Usage
+Running the binary directly (`houdini` or `houdini --dry-run`) is useful for debugging; `brew services` is the normal path.
 
+## Build from source
+
+```bash
+git clone https://github.com/mgxv/houdini && cd houdini
+./build.sh
+./houdini --dry-run
 ```
-houdini [--dry-run]     Run in foreground (dry-run = observe, don't toggle)
-houdini install         Install LaunchAgent + autostart
-houdini uninstall       Stop, clean up, and restore the menu bar
-houdini status          Show install state, paths, and current pref
-houdini help            Print help
-```
 
-Logs live at `~/Library/Logs/houdini.log` when installed.
+Requires macOS 15+, Xcode command-line tools, and Swift 5.10 or newer.
 
 ## Project layout
 
 ```
-build.sh          # Builds the framework + Swift binary
-Sources/          # Swift source (daemon, CLI, LaunchAgent management)
-vendor/           # mediaremote-adapter (Obj-C + Perl shim)
+build.sh            # Builds the framework + Swift binary
+Formula/houdini.rb  # Homebrew formula
+Sources/            # Swift daemon + CLI
+vendor/             # mediaremote-adapter (Obj-C + Perl shim)
 ```
-
-Build outputs (`MediaRemoteAdapter.framework/` and `houdini`) land at the project root and must stay side by side — the binary resolves the framework by path at runtime.
 
 ## Acknowledgements
 

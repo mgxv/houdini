@@ -26,6 +26,12 @@ HOST_ARCH="$(uname -m)"
 #   $PREFIX/libexec/houdini/vendor/
 PREFIX="${PREFIX:-$PROJECT_ROOT}"
 
+# Single source of truth for the framework plist version. Bump this
+# file in lockstep with the Homebrew formula's `url` tag on release.
+[ -f VERSION ] || { echo "VERSION file missing" >&2; exit 1; }
+VERSION="$(tr -d '[:space:]' < VERSION)"
+[ -n "$VERSION" ] || { echo "VERSION file is empty" >&2; exit 1; }
+
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
     B="$(tput bold)"; G="$(tput setaf 2)"; R="$(tput setaf 1)"; N="$(tput sgr0)"
 else
@@ -98,12 +104,12 @@ cat > "$FRAMEWORK/Versions/A/Resources/Info.plist" <<PLIST
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>$FRAMEWORK_NAME</string>
-    <key>CFBundleIdentifier</key><string>com.houdini.$FRAMEWORK_NAME</string>
+    <key>CFBundleIdentifier</key><string>com.github.mgxv.houdini.$FRAMEWORK_NAME</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>$FRAMEWORK_NAME</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
-    <key>CFBundleVersion</key><string>0.1.0</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$VERSION</string>
 </dict>
 </plist>
 PLIST
