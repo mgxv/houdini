@@ -51,7 +51,8 @@ Running the binary directly `houdini` is useful for debugging; `brew services` i
 ```bash
 houdini status                    # print frontmost / Now-Playing state and the
                                   # hide/show decision the daemon would make
-houdini logs <out|err> [--tail N] # tail houdini.log (out) or houdini.err (err)
+houdini logs <out|err>            # stream new lines from houdini.log (out)
+                                  # or houdini.err (err)
 houdini version                   # print version
 houdini help                      # full usage
 ```
@@ -118,7 +119,9 @@ brew services start houdini
 - `/opt/homebrew/var/log/houdini.log` — HIDE/SHOW decisions with timestamps
 - `/opt/homebrew/var/log/houdini.err` — errors; output from the subprocess is prefixed `[adapter]` so it's distinguishable from houdini's own warnings
 
-Tail either via `houdini logs out --tail 50` or `houdini logs err --tail 50` — that command handles the Apple Silicon vs Intel Homebrew path automatically.
+Each file is capped at 500 KB: on daemon startup, if either is larger, it's truncated in place (no rotated archive). This keeps disk usage bounded without external tooling like `newsyslog`.
+
+Stream either via `houdini logs out` or `houdini logs err` — that command handles the Apple Silicon vs Intel Homebrew path automatically and prints new lines as they're written.
 
 
 ## Project layout
