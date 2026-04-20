@@ -1,24 +1,7 @@
-// Filesystem paths used at runtime. LaunchAgent-specific paths live in
-// LaunchAgent.swift.
+// Filesystem paths used at runtime to locate the vendored
+// mediaremote-adapter script and MediaRemoteAdapter.framework.
 
 import Foundation
-
-/// Builds a URL relative to the user's home directory.
-func homeURL(_ subpath: String) -> URL {
-    URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(subpath)
-}
-
-/// Where `houdini install` drops the CLI symlink.
-func symlinkURL() -> URL {
-    homeURL(".local/bin/houdini")
-}
-
-/// Whether the directory containing the CLI symlink is on $PATH.
-func symlinkDirIsOnPath() -> Bool {
-    guard let path = ProcessInfo.processInfo.environment["PATH"] else { return false }
-    let target = symlinkURL().deletingLastPathComponent().path
-    return path.split(separator: ":").contains { String($0) == target }
-}
 
 /// Resolves the vendored `mediaremote-adapter.pl` and
 /// `MediaRemoteAdapter.framework` paths. Searches, in order:

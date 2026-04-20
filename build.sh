@@ -13,6 +13,19 @@ FRAMEWORK_NAME="MediaRemoteAdapter"
 FRAMEWORK="${FRAMEWORK_NAME}.framework"
 BINARY="houdini"
 
+# Deployment floor. Keep in sync with the Homebrew formula's
+# `depends_on macos:` and any README claims.
+MIN_MACOS="15.0"
+HOST_ARCH="$(uname -m)"
+
+# Optional install prefix. When unset, the build produces a flat dev
+# layout at $PROJECT_ROOT. When set (e.g. by the Homebrew formula),
+# outputs are staged into:
+#   $PREFIX/bin/houdini
+#   $PREFIX/libexec/houdini/MediaRemoteAdapter.framework
+#   $PREFIX/libexec/houdini/vendor/
+PREFIX="${PREFIX:-$PROJECT_ROOT}"
+
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
     B="$(tput bold)"; G="$(tput setaf 2)"; R="$(tput setaf 1)"; N="$(tput sgr0)"
 else
@@ -61,10 +74,11 @@ ok "${#SOURCES[@]} source files (test.m excluded)"
 step "Cleaning previous build outputs"
 rm -rf "$FRAMEWORK" "$BINARY"
 
-step "Compiling $FRAMEWORK (arm64 + x86_64)"
+step "Compiling $FRAMEWORK (arm64 + x86_64, macOS $MIN_MACOS+)"
 mkdir -p "$FRAMEWORK/Versions/A/Resources" "$FRAMEWORK/Versions/A/Headers"
 clang \
     -arch arm64 -arch x86_64 \
+    -mmacosx-version-min="$MIN_MACOS" \
     -fobjc-arc -fvisibility=default \
     -dynamiclib \
     -framework Foundation -framework AppKit \
@@ -104,13 +118,38 @@ step "Ad-hoc code-signing $FRAMEWORK"
 codesign --force --sign - "$FRAMEWORK"
 ok "signed"
 
-step "Compiling $BINARY"
+step "Compiling $BINARY ($HOST_ARCH, macOS $MIN_MACOS+)"
 SWIFT_SOURCES=(Sources/*.swift)
 [ ${#SWIFT_SOURCES[@]} -gt 0 ] || die "no .swift sources found under Sources/"
-swiftc -O -o "$BINARY" "${SWIFT_SOURCES[@]}" \
+swiftc -O \
+    -target "${HOST_ARCH}-apple-macos${MIN_MACOS}" \
+    -o "$BINARY" "${SWIFT_SOURCES[@]}" \
     -framework Cocoa -framework ApplicationServices
 ok "linked $BINARY (${#SWIFT_SOURCES[@]} source files)"
 
+if [ "$PREFIX" != "$PROJECT_ROOT" ]; then
+    step "Installing to $PREFIX"
+    BIN_DIR="$PREFIX/bin"
+    LIBEXEC_DIR="$PREFIX/libexec/houdini"
+    mkdir -p "$BIN_DIR" "$LIBEXEC_DIR"
+    # Wipe any stale artifacts from a previous install at this prefix.
+    rm -rf "$LIBEXEC_DIR/$FRAMEWORK" "$LIBEXEC_DIR/vendor" "$BIN_DIR/$BINARY"
+    # `cp -R` preserves the framework's internal Versions/Current symlinks.
+    cp -R "$FRAMEWORK" "$LIBEXEC_DIR/"
+    cp -R vendor "$LIBEXEC_DIR/"
+    mv "$BINARY" "$BIN_DIR/"
+    # Framework was copied, not moved — clean the staging location so the
+    # project root doesn't end up with a duplicate copy.
+    rm -rf "$FRAMEWORK"
+    ok "installed under $PREFIX"
+fi
+
 printf "\n%sBuild complete.%s\n" "$B" "$N"
-printf "    ./%s\n" "$FRAMEWORK"
-printf "    ./%s\n" "$BINARY"
+if [ "$PREFIX" = "$PROJECT_ROOT" ]; then
+    printf "    ./%s\n" "$FRAMEWORK"
+    printf "    ./%s\n" "$BINARY"
+else
+    printf "    %s/bin/%s\n" "$PREFIX" "$BINARY"
+    printf "    %s/libexec/houdini/%s\n" "$PREFIX" "$FRAMEWORK"
+    printf "    %s/libexec/houdini/vendor/\n" "$PREFIX"
+fi
