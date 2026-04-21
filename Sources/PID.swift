@@ -9,6 +9,15 @@
 
 import Foundation
 
+// macOS tracks, for every process, the user-facing app it acts on
+// behalf of (the "responsible process") — e.g. Safari's WebKit GPU
+// helper resolves to Safari. Same mechanism TCC uses to attribute a
+// camera prompt to Safari when the request came from a WebKit
+// content process. Not in a public SDK header, but present and stable
+// in libsystem_coreservices since 10.12.
+@_silgen_name("responsibility_get_pid_responsible_for_pid")
+private func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
+
 /// PID of the frontmost (focused) application.
 struct FrontmostPID: Hashable {
     let rawValue: pid_t
@@ -28,10 +37,17 @@ struct NowPlayingPID: Hashable {
 
 extension FrontmostPID {
     /// Whether this frontmost PID refers to the same OS process as
-    /// the given Now Playing PID. Callers must use this explicitly —
-    /// the two types are deliberately not `Equatable` across roles.
+    /// the given Now Playing PID, or to the app that owns it.
+    /// Safari (and any WebKit-based browser) routes media through an
+    /// out-of-process helper — the Now Playing PID is the helper, not
+    /// the visible app. A strict PID match would miss that case, so we
+    /// fall back to the OS's responsibility mapping.
+    /// Callers must use this explicitly — the two types are
+    /// deliberately not `Equatable` across roles.
     func isSameProcess(as other: NowPlayingPID) -> Bool {
-        rawValue == other.rawValue
+        if rawValue == other.rawValue { return true }
+        let responsible = responsibility_get_pid_responsible_for_pid(other.rawValue)
+        return responsible > 0 && responsible == rawValue
     }
 }
 
