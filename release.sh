@@ -11,11 +11,11 @@
 #   7. Mirror                   cp Formula/houdini.rb → mgxv/homebrew-houdini
 #   8. Commit tap formula       → push tap
 #
-# The in-repo Formula/houdini.rb is authoritative; the tap is a pure
-# mirror. Preflight enforces byte-identity between the two before
-# starting, so accidental manual edits in only one place abort the
-# release. The tap repo (mgxv/homebrew-houdini) is what `brew install`
-# actually reads.
+# The in-repo Formula/houdini.rb is authoritative; the tap is a mirror
+# overwritten unconditionally by the mirror step. You can edit the
+# in-repo formula freely between releases — the release flow syncs it
+# to the tap. The tap repo (mgxv/homebrew-houdini) is what
+# `brew install` actually reads.
 #
 # Usage:
 #   ./release.sh 0.3.0
@@ -248,14 +248,13 @@ grep -qE 'sha256 "[^"]+"' "$IN_REPO_FORMULA" \
     || die "$IN_REPO_FORMULA has no recognizable sha256 \"...\" line"
 ok "url + sha256 lines found"
 
-# The in-repo copy is authoritative; the tap is a mirror. They must
-# start byte-identical — any drift means a manual edit landed in only
-# one place and needs reconciling before release.
-STAGE="preflight: formula sync"
-step "Checking in-repo ↔ tap formula sync"
-diff -q "$IN_REPO_FORMULA" "$TAP_FORMULA" >/dev/null \
-    || die "$IN_REPO_FORMULA and $TAP_FORMULA have drifted — the in-repo copy is authoritative; cp it to the tap and commit, then retry"
-ok "formulas are byte-identical"
+# In-repo is authoritative; the tap is a mirror overwritten unconditionally
+# by the mirror step. We don't enforce byte-identity here — if they've
+# drifted (e.g. from an in-repo-only edit between releases), just note it
+# and let the release flow bring them back in sync.
+if ! diff -q "$IN_REPO_FORMULA" "$TAP_FORMULA" >/dev/null 2>&1; then
+    note "in-repo and tap formulas differ — tap will be overwritten by the mirror step"
+fi
 
 STAGE="preflight: interactivity"
 if [ $YES -eq 0 ] && [ ! -t 0 ]; then
