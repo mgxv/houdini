@@ -10,6 +10,7 @@ import Foundation
 /// Runs the daemon loop. Intended to be invoked by launchd via
 /// `brew services`; runs fine in a terminal for local debugging too.
 func runForeground() {
+    acquireInstanceLock()
     ensureAccessibilityPermission()
     let artifacts = locateArtifacts()
 
@@ -108,6 +109,7 @@ func runStatus() -> Never {
     }()
 
     let fsStr = fullscreen.map { $0 ? "yes" : "no" } ?? "unknown"
+    print("daemon:   \(probeDaemonRunning() ? "running" : "not running")")
     print("front:    \(frontName) (pid=\(frontPIDStr), fullscreen=\(fsStr))")
     switch np {
     case .none:

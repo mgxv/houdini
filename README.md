@@ -57,7 +57,7 @@ houdini version                   # print version
 houdini help                      # full usage
 ```
 
-`houdini status` is the fastest way to verify what the daemon is seeing — it samples the same inputs (frontmost app, Accessibility fullscreen state, Now Playing) independently of the running daemon, so it's safe to run at any time.
+`houdini status` is the fastest way to verify what the daemon is seeing — it reports whether a daemon is running and samples the same inputs (frontmost app, Accessibility fullscreen state, Now Playing) independently of it, so it's safe to run at any time.
 
 
 ## Troubleshooting
@@ -65,18 +65,20 @@ houdini help                      # full usage
 ### Is it actually running?
 
 ```bash
+houdini status                     # prints `daemon: running` or `not running`
 brew services info houdini         # launchd view: Running / Loaded / PID
 pgrep -afl houdini                 # confirms the Swift daemon is alive
 pgrep -afl mediaremote-adapter     # confirms the Perl subprocess it spawns
 ```
 
-A healthy install shows **two** processes — the `houdini` binary and the `/usr/bin/perl … mediaremote-adapter.pl stream …` child it spawns for Now-Playing events. If houdini is alive but the Perl child is missing, the daemon will log an error to `houdini.err` and exit.
+A healthy install shows **two** processes — the `houdini` binary and the `/usr/bin/perl … mediaremote-adapter.pl stream …` child it spawns for Now-Playing events. If the Perl child dies, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
 
 ### The menu bar isn't hiding
 
 Run `houdini status` — it re-samples the same three inputs the daemon uses and names the first unmet precondition:
 
 ```
+daemon:   running
 front:    Safari (pid=501, fullscreen=yes)
 playing:  com.spotify.client (pid=1337, playing=yes)
 decision: SHOW  (frontmost and Now Playing are different processes)

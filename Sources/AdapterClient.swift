@@ -25,11 +25,21 @@ final class AdapterClient {
     ///    one event per 200 ms.
     private static let streamArgs: [String] = ["stream", "--no-diff", "--debounce=200"]
 
+    /// Max bytes we'll buffer for a single stdout line. Sized well above
+    /// any realistic event — stream-mode JSON with base64 artwork data
+    /// tops out around a megabyte in the wild — but small enough that a
+    /// runaway subprocess can't exhaust memory.
+    private static let stdoutLineLimit = 2 * 1024 * 1024
+
+    /// Max bytes for a single stderr line. Stderr carries short log
+    /// messages from the adapter, so this is much tighter.
+    private static let stderrLineLimit = 64 * 1024
+
     private let process = Process()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
-    private var stdoutBuffer = Data()
-    private var stderrBuffer = Data()
+    private var stdoutBuffer = LineBuffer(limit: stdoutLineLimit)
+    private var stderrBuffer = LineBuffer(limit: stderrLineLimit)
     private var stopping = false
     private let onUpdate: UpdateHandler
 
@@ -65,7 +75,13 @@ final class AdapterClient {
     /// Accumulates a stdout chunk and flushes any complete (newline-
     /// terminated) lines to `handleStdoutLine`.
     private func ingestStdout(_ chunk: Data) {
-        consumeLines(into: &stdoutBuffer, chunk: chunk) { self.handleStdoutLine($0) }
+        stdoutBuffer.ingest(
+            chunk,
+            handler: { self.handleStdoutLine($0) },
+            onOverflow: {
+                warn("adapter stdout exceeded \(Self.stdoutLineLimit / 1024 / 1024) MiB without a newline; buffer reset. Further overflows suppressed until restart.")
+            },
+        )
     }
 
     /// Accumulates a stderr chunk and forwards each complete line to
@@ -75,27 +91,16 @@ final class AdapterClient {
     /// the equivalent `log stream` invocation) when diagnosing the
     /// subprocess.
     private func ingestStderr(_ chunk: Data) {
-        consumeLines(into: &stderrBuffer, chunk: chunk) { line in
-            let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
-            Log.adapter.debug("\(text, privacy: .public)")
-        }
-    }
-
-    /// Appends a chunk to `buffer` and flushes each complete
-    /// (newline-terminated) line to `handler`. Incomplete trailing
-    /// data stays in the buffer for the next call.
-    private func consumeLines(
-        into buffer: inout Data,
-        chunk: Data,
-        handler: (Data) -> Void,
-    ) {
-        if chunk.isEmpty { return }
-        buffer.append(chunk)
-        while let nl = buffer.firstIndex(of: 0x0A) {
-            let line = buffer.subdata(in: 0 ..< nl)
-            buffer.removeSubrange(0 ... nl)
-            handler(line)
-        }
+        stderrBuffer.ingest(
+            chunk,
+            handler: { line in
+                let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
+                Log.adapter.debug("\(text, privacy: .public)")
+            },
+            onOverflow: {
+                warn("adapter stderr exceeded \(Self.stderrLineLimit / 1024) KiB without a newline; buffer reset. Further overflows suppressed until restart.")
+            },
+        )
     }
 
     private func handleStdoutLine(_ line: Data) {
