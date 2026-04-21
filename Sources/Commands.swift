@@ -173,12 +173,32 @@ func runLogs(args: [String]) -> Never {
         "--level", "info",
         "--style", "compact",
     ]
+
+    // Ctrl-C sends SIGINT to the whole foreground process group, but
+    // `/usr/bin/log stream` doesn't always exit cleanly on it — leaving
+    // an orphan still attached to the tty, writing log lines between
+    // future shell prompts. Install handlers on a background queue (the
+    // main thread is about to block in waitUntilExit) that explicitly
+    // terminate the child; waitUntilExit then returns and we exit with
+    // its status.
+    let signalSources: [DispatchSourceSignal] = [SIGINT, SIGTERM].map { sig in
+        signal(sig, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+        src.setEventHandler {
+            if proc.isRunning { proc.terminate() }
+        }
+        src.resume()
+        return src
+    }
+
     do {
         try proc.run()
     } catch {
         die("failed to exec /usr/bin/log: \(error)")
     }
-    proc.waitUntilExit()
+    withExtendedLifetime(signalSources) {
+        proc.waitUntilExit()
+    }
     exit(proc.terminationStatus)
 }
 
