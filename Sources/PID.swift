@@ -19,7 +19,7 @@ import Foundation
 private func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
 
 /// PID of the frontmost (focused) application.
-struct FrontmostPID: Hashable {
+struct FrontmostPID: Hashable, Sendable {
     let rawValue: pid_t
     init(_ rawValue: pid_t) {
         self.rawValue = rawValue
@@ -28,7 +28,7 @@ struct FrontmostPID: Hashable {
 
 /// PID of the application currently owning the system Now Playing
 /// widget (i.e. the media source).
-struct NowPlayingPID: Hashable {
+struct NowPlayingPID: Hashable, Sendable {
     let rawValue: pid_t
     init(_ rawValue: pid_t) {
         self.rawValue = rawValue

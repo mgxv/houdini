@@ -98,10 +98,10 @@ Common reasons:
 If you revoke Accessibility while the daemon is running, `houdini logs` will show:
 
 ```
-houdini: Accessibility permission appears to have been revoked; fullscreen detection is disabled.
+Accessibility permission appears to have been revoked; fullscreen detection is disabled.
 ```
 
-Re-grant in *System Settings → Privacy & Security → Accessibility*, then:
+(The same message is echoed to stderr with a `houdini:` prefix when the binary runs in a foreground terminal.) Re-grant in *System Settings → Privacy & Security → Accessibility*, then:
 
 ```bash
 brew services restart houdini
@@ -140,10 +140,13 @@ Or open Console.app and filter on subsystem `com.github.mgxv.houdini`.
 ## Project layout
 
 ```
-build.sh            # Builds the framework + Swift binary
-Formula/houdini.rb  # Homebrew formula
-Sources/            # Swift daemon + CLI
-vendor/             # mediaremote-adapter (Obj-C + Perl shim)
+build.sh              # Builds the framework + Swift binary (canonical path)
+release.sh            # Version bump → tag → formula update → tap mirror
+Formula/houdini.rb    # Homebrew formula
+Package.swift         # Optional SwiftPM manifest (for IDE indexing)
+Sources/              # Swift daemon + CLI (Swift 6, strict concurrency)
+Sources/Version.swift # Single source of truth for the version string
+vendor/               # mediaremote-adapter (Obj-C + Perl shim)
 ```
 
 ## Acknowledgements

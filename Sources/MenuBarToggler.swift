@@ -9,6 +9,7 @@
 
 import Foundation
 
+@MainActor
 final class MenuBarToggler {
     private static let key = "AppleMenuBarVisibleInFullscreen" as CFString
     private static let domain = kCFPreferencesAnyApplication

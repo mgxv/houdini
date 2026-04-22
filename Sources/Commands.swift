@@ -9,6 +9,7 @@ import Foundation
 
 /// Runs the daemon loop. Intended to be invoked by launchd via
 /// `brew services`; runs fine in a terminal for local debugging too.
+@MainActor
 func runForeground() {
     acquireInstanceLock()
     ensureAccessibilityPermission()
@@ -31,7 +32,9 @@ func runForeground() {
 
     let adapter = AdapterClient(
         artifacts: artifacts,
-        onUpdate: controller.updateMedia,
+        onUpdate: { @MainActor playing, pid, bundle in
+            controller.updateMedia(playing: playing, pid: pid, bundle: bundle)
+        },
     )
 
     controller.start()
@@ -46,8 +49,8 @@ func runForeground() {
         adapter.stop()
     }
 
-    Log.general.notice("houdini \(houdiniVersion, privacy: .public) running")
-    print("houdini running. Press Ctrl-C to quit.")
+    Log.general.notice("houdini \(version, privacy: .public) running")
+    print("houdini \(version) running. Press Ctrl-C to quit.")
     withExtendedLifetime(signalSources) {
         RunLoop.main.run()
     }
@@ -55,15 +58,22 @@ func runForeground() {
 
 /// Installs main-thread SIGINT/SIGTERM handlers that run `shutdown`
 /// before exit. The returned sources must be kept alive by the caller.
-func installSignalHandlers(_ shutdown: @escaping () -> Void) -> [DispatchSourceSignal] {
+@MainActor
+func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [DispatchSourceSignal] {
     [SIGINT, SIGTERM].map { sig in
         signal(sig, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
         src.setEventHandler {
-            Log.general.notice("houdini stopping")
-            print("\nhoudini stopping…")
-            shutdown()
-            exit(0)
+            // The source is queued on .main, so this handler runs on the
+            // main thread — but DispatchSource's event handler isn't
+            // statically main-actor-isolated. Assume the isolation so we
+            // can call @MainActor APIs synchronously before exit().
+            MainActor.assumeIsolated {
+                Log.general.notice("houdini \(version, privacy: .public) stopping")
+                print("\nhoudini \(version) stopping…")
+                shutdown()
+                exit(0)
+            }
         }
         src.resume()
         return src
@@ -77,6 +87,7 @@ func installSignalHandlers(_ shutdown: @escaping () -> Void) -> [DispatchSourceS
 /// prompts for Accessibility permission, safe to run while the daemon
 /// is active. The snapshot is independent — it doesn't talk to the
 /// running daemon; it just re-samples the same inputs.
+@MainActor
 func runStatus() -> Never {
     let artifacts = locateArtifacts()
 
@@ -133,6 +144,7 @@ func runStatus() -> Never {
 /// Explains why `shouldHide` is false, picking the first unmet
 /// precondition in logical order so the message names something the
 /// user can act on.
+@MainActor
 private func showReason(
     frontPID: FrontmostPID?,
     fullscreen: Bool,
@@ -148,8 +160,9 @@ private func showReason(
 
 // MARK: - version
 
+@MainActor
 func runVersion() -> Never {
-    print("houdini \(houdiniVersion)")
+    print("houdini \(version)")
     exit(0)
 }
 
@@ -160,6 +173,7 @@ func runVersion() -> Never {
 /// stream to one of `controller`, `adapter`, or `general`. `adapter`
 /// uses `--level debug` because subprocess output is logged there;
 /// the rest stay at `info`. For history, use `log show` directly.
+@MainActor
 func runLogs(args: [String]) -> Never {
     if args.count > 1 {
         die("too many arguments for logs — try: houdini logs [controller|adapter|general]")
@@ -191,9 +205,9 @@ func runLogs(args: [String]) -> Never {
     // `/usr/bin/log stream` doesn't always exit cleanly on it — leaving
     // an orphan still attached to the tty, writing log lines between
     // future shell prompts. Install handlers on a background queue (the
-    // main thread is about to block in waitUntilExit) that explicitly
-    // terminate the child; waitUntilExit then returns and we exit with
-    // its status.
+    // main thread is about to block in waitUntilExit, so a .main-queued
+    // source would never fire) that explicitly terminate the child;
+    // waitUntilExit then returns and we exit with its status.
     let signalSources: [DispatchSourceSignal] = [SIGINT, SIGTERM].map { sig in
         signal(sig, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
@@ -219,6 +233,7 @@ func runLogs(args: [String]) -> Never {
 
 // MARK: - help
 
+@MainActor
 func usage() {
     print("""
     houdini — hides the menu bar when the frontmost fullscreen app is

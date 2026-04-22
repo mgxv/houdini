@@ -24,6 +24,7 @@ func shouldHideMenuBar(
     return true
 }
 
+@MainActor
 final class Controller: NSObject {
     /// Immutable view of the inputs that drive the hide/show decision.
     /// `shouldHide` is derived — two snapshots compare equal iff every
@@ -33,7 +34,7 @@ final class Controller: NSObject {
     /// `frontPID` and `nowPlayingPID` are distinct types (not just
     /// distinct values) so the compiler blocks accidentally swapping
     /// them.
-    private struct Snapshot: Equatable {
+    private struct Snapshot: Equatable, Sendable {
         let frontPID: FrontmostPID?
         let frontName: String
         let fullScreen: Bool

@@ -5,7 +5,7 @@ import Foundation
 
 /// Filesystem paths the daemon needs at runtime, resolved by
 /// `locateArtifacts()`.
-struct AdapterArtifacts {
+struct AdapterArtifacts: Sendable {
     /// Absolute path to `mediaremote-adapter.pl`.
     let scriptPath: String
     /// Absolute path to `MediaRemoteAdapter.framework`.
@@ -21,6 +21,7 @@ struct AdapterArtifacts {
 ///
 /// The first directory that contains *both* artifacts wins. Exits if no
 /// candidate matches.
+@MainActor
 func locateArtifacts() -> AdapterArtifacts {
     guard let exec = Bundle.main.executableURL else {
         die("could not determine binary path (Bundle.main.executableURL is nil)")

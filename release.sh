@@ -3,7 +3,7 @@
 #
 # Flow (what the plan prompt shows the user):
 #   1. Sanity-build             (./build.sh; skip with --skip-build)
-#   2. Bump VERSION             → commit + push main
+#   2. Bump Sources/Version.swift → commit + push main
 #   3. Tag vX.Y.Z               → push tag (publishes the GitHub tarball)
 #   4. Fetch tarball            → compute sha256
 #   5. Rewrite url + sha256     in Formula/houdini.rb (this repo)
@@ -189,11 +189,11 @@ step "Checking prerequisites"
 for tool in git curl shasum sed awk grep sort; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
-[ -d "$TAP_DIR/.git" ]    || die "tap repo not found at $TAP_DIR — clone mgxv/homebrew-houdini there or set HOUDINI_TAP"
-[ -f "$TAP_FORMULA" ]     || die "tap formula missing: $TAP_FORMULA"
-[ -f "$IN_REPO_FORMULA" ] || die "in-repo formula missing: $IN_REPO_FORMULA"
-[ -f VERSION ]            || die "VERSION missing"
-[ -x ./build.sh ]         || die "./build.sh missing or not executable"
+[ -d "$TAP_DIR/.git" ]          || die "tap repo not found at $TAP_DIR — clone mgxv/homebrew-houdini there or set HOUDINI_TAP"
+[ -f "$TAP_FORMULA" ]           || die "tap formula missing: $TAP_FORMULA"
+[ -f "$IN_REPO_FORMULA" ]       || die "in-repo formula missing: $IN_REPO_FORMULA"
+[ -f Sources/Version.swift ]    || die "Sources/Version.swift missing"
+[ -x ./build.sh ]               || die "./build.sh missing or not executable"
 ok "tools + files present (tap at $TAP_DIR)"
 
 STAGE="preflight: git state (source)"
@@ -223,11 +223,13 @@ ok "tap on $TAP_BRANCH, clean, aligned with origin"
 
 STAGE="preflight: version + tag"
 step "Checking version + tag"
-CURRENT_VERSION="$(tr -d '[:space:]' < VERSION)"
+# Matches `let version = "X.Y.Z"` — awk -F'"' splits on double quotes,
+# field 2 is the literal. Must stay in sync with the parser in build.sh.
+CURRENT_VERSION="$(awk -F'"' '/^let version *=/ {print $2; exit}' Sources/Version.swift)"
 [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || die "VERSION file is malformed: '$CURRENT_VERSION'"
+    || die "Sources/Version.swift has no parseable 'version' (got: '$CURRENT_VERSION')"
 [ "$NEW_VERSION" != "$CURRENT_VERSION" ] \
-    || die "VERSION is already $NEW_VERSION"
+    || die "Sources/Version.swift is already at $NEW_VERSION"
 # sort -V semver-sorts; -C checks the input is already sorted. Feeding
 # NEW,CURRENT and asking "is this sorted?" == "is NEW <= CURRENT?" —
 # which is what we want to reject.
@@ -269,7 +271,7 @@ cat <<PLAN
 
 ${B}Plan${N}
   1. $( [ $SKIP_BUILD -eq 1 ] && echo "(skipped) ")Sanity-build with ./build.sh
-  2. Bump VERSION → commit "houdini $NEW_VERSION" → push main (this repo)
+  2. Bump Sources/Version.swift → commit "houdini $NEW_VERSION" → push main (this repo)
   3. Tag $TAG → push tag (this repo)
   4. Fetch $TARBALL_URL, compute sha256
   5. Rewrite url + sha256 in $IN_REPO_FORMULA
@@ -298,14 +300,23 @@ else
     note "sanity build skipped"
 fi
 
-# 2. Bump VERSION → commit → push (this repo)
+# 2. Bump Sources/Version.swift → commit → push. This is the single
+# source of truth; build.sh reads it, the binary embeds it, the
+# framework Info.plist gets stamped with it.
 STAGE="bumping_version"
-step "Bumping VERSION"
-say "echo \"$NEW_VERSION\" > VERSION"
-echo "$NEW_VERSION" > VERSION
-run git add VERSION
+step "Bumping Sources/Version.swift"
+say "rewrite Sources/Version.swift with version = \"$NEW_VERSION\""
+cat > Sources/Version.swift <<SWIFT
+// Single source of truth for the version string. Read by build.sh
+// (stamped into the framework Info.plist) and release.sh (compared +
+// rewritten on bump). Edit this file directly only for a hand-patch;
+// normal version bumps go through release.sh.
+
+let version = "$NEW_VERSION"
+SWIFT
+run git add Sources/Version.swift
 run git commit -m "houdini $NEW_VERSION"
-ok "committed"
+ok "committed Sources/Version.swift"
 
 STAGE="pushing_version_commit"
 run git push origin main
@@ -353,7 +364,7 @@ run grep -q "sha256 \"$SHA\""      "$IN_REPO_FORMULA" || die "sha256 rewrite did
 ok "url + sha256 updated in $IN_REPO_FORMULA"
 
 # 6. Commit in-repo formula → push main. Second commit on top of the
-# VERSION bump — the tagged tarball can't contain its own sha256, so
+# version bump — the tagged tarball can't contain its own sha256, so
 # this has to land after the tag rather than inside it.
 STAGE="committing_in_repo_formula"
 run git add Formula/houdini.rb

@@ -1,15 +1,21 @@
 // Cross-process Accessibility helpers. NSWindow's
 // didEnter/didExitFullScreen only fires for windows in the host
 // process, so we observe the frontmost app via AXObserver instead.
+//
+// The one AX constant whose read needs a @preconcurrency suppression
+// (`kAXTrustedCheckOptionPrompt`) is accessed via
+// `axTrustedCheckOptionPromptKey` in AXPromptKey.swift — keeping the
+// suppression scoped to that one file so any future
+// @preconcurrency-covered addition is grep-visible.
 
 import ApplicationServices
 import Foundation
 
 /// Prompts the user to grant Accessibility permission if not already
 /// granted. Exits on failure — nothing else works without it.
+@MainActor
 func ensureAccessibilityPermission() {
-    let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-    if !AXIsProcessTrustedWithOptions([key: true] as CFDictionary) {
+    if !AXIsProcessTrustedWithOptions([axTrustedCheckOptionPromptKey: true] as CFDictionary) {
         die("""
         Accessibility permission required.
         Open: System Settings → Privacy & Security → Accessibility
@@ -22,19 +28,23 @@ func ensureAccessibilityPermission() {
 /// Non-prompting Accessibility trust check. Unlike
 /// `ensureAccessibilityPermission`, this never shows the system prompt
 /// and never exits — it's used by read-only diagnostics like `status`.
+/// Kept `nonisolated` so it's callable from any isolation; the underlying
+/// syscall is thread-safe.
 func isAccessibilityTrusted() -> Bool {
     AXIsProcessTrusted()
 }
 
 /// Latched after the first `AXError.apiDisabled` we observe at runtime,
 /// so the warning is emitted once instead of on every evaluation tick.
-/// All AX calls in houdini run on the main thread, so no lock is needed.
-private var axPermissionLostReported = false
+/// `@MainActor`-isolated because every caller of `noteAXError` is —
+/// that's what keeps the flag race-free without a lock.
+@MainActor private var axPermissionLostReported = false
 
 /// Emits a one-time warning if the given AX error signals that the
 /// process is no longer trusted. Only `.apiDisabled` indicates
 /// revocation — other failures (windowless apps, unresponsive targets,
 /// unsupported attributes) are normal and must not trigger the warning.
+@MainActor
 private func noteAXError(_ error: AXError) {
     guard error == .apiDisabled, !axPermissionLostReported else { return }
     axPermissionLostReported = true
@@ -48,6 +58,7 @@ private func noteAXError(_ error: AXError) {
 /// The currently focused window of the given process, if any.
 /// Accepts `pid_t?` so callers that don't have a frontmost app can
 /// pass nil and get nil back without a local guard.
+@MainActor
 func focusedWindow(of pid: pid_t?) -> AXUIElement? {
     guard let pid, pid > 0 else { return nil }
     var ref: AnyObject?
@@ -66,13 +77,14 @@ func focusedWindow(of pid: pid_t?) -> AXUIElement? {
 
 /// Watches the frontmost process for focus/resize/move events, which
 /// is how native fullscreen toggles surface cross-process.
+@MainActor
 final class AXWatcher {
     private var observer: AXObserver?
     private var attachedPID: pid_t = 0
     private var watchedWindow: AXUIElement?
-    private let onChange: () -> Void
+    private let onChange: @MainActor () -> Void
 
-    init(onChange: @escaping () -> Void) {
+    init(onChange: @escaping @MainActor () -> Void) {
         self.onChange = onChange
     }
 
@@ -114,13 +126,18 @@ final class AXWatcher {
     }
 
     private func makeObserver(for pid: pid_t) -> AXObserver? {
+        // The AX observer source is added to CFRunLoopGetMain(), so this
+        // C callback is delivered on the main thread — just not statically
+        // provable. `MainActor.assumeIsolated` asserts that invariant.
         let callback: AXObserverCallback = { _, _, name, refcon in
             guard let refcon else { return }
-            let me = Unmanaged<AXWatcher>.fromOpaque(refcon).takeUnretainedValue()
-            if (name as String) == kAXFocusedWindowChangedNotification {
-                me.refreshWindowSubscription()
+            MainActor.assumeIsolated {
+                let me = Unmanaged<AXWatcher>.fromOpaque(refcon).takeUnretainedValue()
+                if (name as String) == kAXFocusedWindowChangedNotification {
+                    me.refreshWindowSubscription()
+                }
+                me.onChange()
             }
-            me.onChange()
         }
         var newObs: AXObserver?
         let status = AXObserverCreate(pid, callback, &newObs)
@@ -154,6 +171,7 @@ final class AXWatcher {
 /// fullscreen. Reads the undocumented but stable `AXFullScreen`
 /// attribute. Returns false for nil/invalid PIDs, apps with no focused
 /// window, or when the attribute isn't available.
+@MainActor
 func isFocusedWindowFullScreen(pid: pid_t?) -> Bool {
     guard let window = focusedWindow(of: pid) else { return false }
     var ref: AnyObject?

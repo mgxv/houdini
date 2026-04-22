@@ -9,6 +9,7 @@ import Foundation
 
 /// Logs at `.error` level; additionally echoes `houdini: <message>`
 /// to stderr when stderr is attached to a TTY.
+@MainActor
 func warn(_ message: String) {
     Log.general.error("\(message, privacy: .public)")
     if isatty(fileno(stderr)) != 0 {
@@ -17,6 +18,7 @@ func warn(_ message: String) {
 }
 
 /// `warn` plus exits with status 1.
+@MainActor
 func die(_ message: String) -> Never {
     warn(message)
     exit(1)

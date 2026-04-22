@@ -1,7 +1,6 @@
 ### houdini build outputs ###
 /houdini
 /MediaRemoteAdapter.framework/
-/Sources/Version.swift
 
 ### local helper scripts (not tracked) ###
 /clean.sh

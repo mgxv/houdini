@@ -12,7 +12,7 @@
 
 import Foundation
 
-struct LineBuffer {
+struct LineBuffer: Sendable {
     let limit: Int
     private var data = Data()
     private var resyncing = false

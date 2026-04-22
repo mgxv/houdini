@@ -31,6 +31,7 @@ private func instanceLockURL() -> URL {
 /// is intentionally leaked — the lock lives for the lifetime of the
 /// process, and closing would release it. Call exactly once, at the
 /// top of `runForeground`.
+@MainActor
 func acquireInstanceLock() {
     let url = instanceLockURL()
     do {

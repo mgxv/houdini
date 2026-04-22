@@ -1,13 +1,19 @@
-// swift-tools-version:5.10
+// swift-tools-version:6.2.4
 // Optional SwiftPM manifest so editors (SourceKit-LSP, Xcode, VS Code)
 // can index Sources/ out of the box. The canonical build is build.sh —
 // it also produces MediaRemoteAdapter.framework, which this manifest
 // doesn't describe because the Swift binary doesn't link it directly
 // (the Perl subprocess loads it at runtime via DynaLoader).
 //
-// Before using SPM (or first opening in an IDE), run ./build.sh once to
-// generate the gitignored Sources/Version.swift. After that, `swift
-// build` works for dev iteration; releases still go through build.sh.
+// The target compiles under the Swift 6 language mode (strict
+// concurrency); build.sh passes the equivalent `-swift-version 6` to
+// its direct swiftc invocation so both build paths match.
+//
+// `swift build` works for dev iteration as-is; releases still go
+// through build.sh. Sources/Version.swift is tracked (the single
+// source of truth for the version string — release.sh rewrites it on
+// a new release) so IDEs resolve `version` on fresh clones without
+// anyone running build.sh first.
 
 import PackageDescription
 
@@ -18,6 +24,9 @@ let package = Package(
         .executableTarget(
             name: "houdini",
             path: "Sources",
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+            ],
         ),
     ],
 )

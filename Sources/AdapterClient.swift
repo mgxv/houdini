@@ -2,21 +2,33 @@
 // stream` (perl is on Apple's MediaRemote allowlist; an unentitled
 // Swift binary isn't) and parses the newline-delimited JSON it
 // streams to stdout. Each "data" event is handed to the controller on
-// the main queue. Anything the subprocess writes to stderr is
+// the main actor. Anything the subprocess writes to stderr is
 // forwarded line-by-line to the unified log under the "adapter"
 // category, so it's distinguishable from houdini's own warnings
 // without needing a stream-specific prefix.
 //
+// The client is an `actor`: Foundation delivers `terminationHandler`
+// and `readabilityHandler` callbacks on its own background queues, and
+// those callbacks hop into the actor via `Task { await self?.… }`
+// before touching the line buffers. `start()` and `stop()` are
+// `nonisolated` so the @MainActor `runForeground` and its SIGINT/
+// SIGTERM signal handler can invoke them synchronously without an
+// `await`. The `UpdateHandler` callback is `@Sendable @MainActor`, so
+// every decision-affecting event reaches the controller on main.
+//
 // `fetchNowPlayingOnce` at the bottom of the file runs the adapter in
-// one-shot `get` mode for the `status` subcommand.
+// one-shot `get` mode for the `status` subcommand; it's @MainActor
+// and blocks the caller until the subprocess exits.
 
 import Foundation
 
-final class AdapterClient {
-    /// Callback delivered on the main queue whenever the adapter emits
+actor AdapterClient {
+    /// Callback delivered on the main actor whenever the adapter emits
     /// a `data` event. `pid` is nil when Now Playing has no current
     /// source (i.e. nothing has ever played, or the last source exited).
-    typealias UpdateHandler = (_ playing: Bool, _ pid: NowPlayingPID?, _ bundle: String?) -> Void
+    typealias UpdateHandler = @Sendable @MainActor (
+        _ playing: Bool, _ pid: NowPlayingPID?, _ bundle: String?
+    ) -> Void
 
     /// Adapter `stream` flags:
     /// - `--no-diff` emits full state on every change, so we don't have
@@ -35,6 +47,9 @@ final class AdapterClient {
     /// messages from the adapter, so this is much tighter.
     private static let stderrLineLimit = 64 * 1024
 
+    // Process and Pipe are declared Sendable by the Foundation SDK on
+    // macOS 15+, so the actor can hand them to Foundation's @Sendable
+    // terminationHandler / readabilityHandler closures without a wrapper.
     private let process = Process()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
@@ -51,25 +66,48 @@ final class AdapterClient {
         process.standardError = stderrPipe
     }
 
-    func start() throws {
+    /// `nonisolated` so callers (the @MainActor `runForeground`) can
+    /// invoke it synchronously without an `await` hop. Only touches
+    /// `Sendable` state (process, pipes) directly; the Foundation-
+    /// delivered callbacks defer actor-isolated work via
+    /// `Task { await self?.… }`.
+    nonisolated func start() throws {
         process.terminationHandler = { [weak self] proc in
-            guard let self, !self.stopping else { return }
-            DispatchQueue.main.async {
-                die("mediaremote-adapter exited unexpectedly (status=\(proc.terminationStatus))")
-            }
+            // Capture the scalar status synchronously so the Process
+            // reference itself doesn't cross into the Task closure;
+            // the actor-internal `stopping` flag is checked after hop.
+            let status = proc.terminationStatus
+            Task { await self?.handleTermination(status: status) }
         }
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.ingestStdout(handle.availableData)
+            let data = handle.availableData
+            Task { await self?.ingestStdout(data) }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.ingestStderr(handle.availableData)
+            let data = handle.availableData
+            Task { await self?.ingestStderr(data) }
         }
         try process.run()
     }
 
-    func stop() {
-        stopping = true
+    /// Terminates the subprocess. `nonisolated` because signal handlers
+    /// call this synchronously during shutdown and can't `await`;
+    /// `Process.terminate()` is thread-safe per Foundation docs. Sets
+    /// the actor-isolated `stopping` flag via a detached task — the
+    /// race against `handleTermination` below is benign: in the worst
+    /// case we log an "unexpected exit" line we could have suppressed.
+    nonisolated func stop() {
+        Task { await self.markStopping() }
         if process.isRunning { process.terminate() }
+    }
+
+    private func markStopping() { stopping = true }
+
+    private func handleTermination(status: Int32) {
+        guard !stopping else { return }
+        Task { @MainActor in
+            die("mediaremote-adapter exited unexpectedly (status=\(status))")
+        }
     }
 
     /// Accumulates a stdout chunk and flushes any complete (newline-
@@ -79,7 +117,8 @@ final class AdapterClient {
             chunk,
             handler: { self.handleStdoutLine($0) },
             onOverflow: {
-                warn("adapter stdout exceeded \(Self.stdoutLineLimit / 1024 / 1024) MiB without a newline; buffer reset. Further overflows suppressed until restart.")
+                let message = "adapter stdout exceeded \(Self.stdoutLineLimit / 1024 / 1024) MiB without a newline; buffer reset. Further overflows suppressed until restart."
+                Task { @MainActor in warn(message) }
             },
         )
     }
@@ -97,7 +136,8 @@ final class AdapterClient {
                 Log.adapter.debug("\(text, privacy: .public)")
             },
             onOverflow: {
-                warn("adapter stderr exceeded \(Self.stderrLineLimit / 1024) KiB without a newline; buffer reset. Further overflows suppressed until restart.")
+                let message = "adapter stderr exceeded \(Self.stderrLineLimit / 1024) KiB without a newline; buffer reset. Further overflows suppressed until restart."
+                Task { @MainActor in warn(message) }
             },
         )
     }
@@ -106,20 +146,19 @@ final class AdapterClient {
         guard !line.isEmpty else { return }
         guard let parsed = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             let preview = String(data: line, encoding: .utf8) ?? "<non-utf8>"
-            warn("ignored non-JSON line from adapter: \(preview)")
+            Task { @MainActor in warn("ignored non-JSON line from adapter: \(preview)") }
             return
         }
         guard let event = AdapterEvent(from: parsed) else { return }
-        DispatchQueue.main.async {
-            self.onUpdate(event.playing, event.pid, event.bundle)
-        }
+        let handler = onUpdate
+        Task { @MainActor in handler(event.playing, event.pid, event.bundle) }
     }
 }
 
 /// The fields we extract from an adapter `data` event. Missing or
 /// wrong-typed fields fall back to safe defaults, matching the
 /// behavior of the original dict-based extraction.
-private struct AdapterEvent {
+private struct AdapterEvent: Sendable {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
@@ -140,7 +179,7 @@ private struct AdapterEvent {
 /// One-shot Now Playing snapshot returned by `fetchNowPlayingOnce`.
 /// `pid == nil` means no app currently owns the Now Playing widget
 /// (the adapter emits the literal JSON `null` in that case).
-struct NowPlayingSnapshot {
+struct NowPlayingSnapshot: Sendable {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
@@ -157,6 +196,7 @@ struct NowPlayingSnapshot {
 /// Returns nil on spawn or parse failure (a `warn()` is emitted first).
 /// Returns `NowPlayingSnapshot(playing: false, pid: nil, bundle: nil)`
 /// when no app currently owns Now Playing.
+@MainActor
 func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
