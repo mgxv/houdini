@@ -13,7 +13,7 @@ enum Log {
 
     /// mediaremote-adapter subprocess output. Logged at `.debug` so it
     /// stays out of the default `houdini logs` stream — surface it with
-    /// `log stream --level debug` when diagnosing the subprocess.
+    /// `houdini logs adapter` when diagnosing the subprocess.
     static let adapter = Logger(subsystem: subsystem, category: "adapter")
 
     /// Startup/shutdown notices and everything routed through `warn`/`die`.

@@ -87,9 +87,8 @@ final class AdapterClient {
     /// Accumulates a stderr chunk and forwards each complete line to
     /// the unified log under the "adapter" category at `.debug` level,
     /// so the default `houdini logs` stream stays focused on decisions
-    /// and warnings. Surface it with `houdini logs --level debug` (or
-    /// the equivalent `log stream` invocation) when diagnosing the
-    /// subprocess.
+    /// and warnings. Surface it with `houdini logs adapter` when
+    /// diagnosing the subprocess.
     private func ingestStderr(_ chunk: Data) {
         stderrBuffer.ingest(
             chunk,

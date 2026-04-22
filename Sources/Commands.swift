@@ -156,21 +156,34 @@ func runVersion() -> Never {
 // MARK: - logs
 
 /// Streams houdini's entries from the unified log by shelling out to
-/// `/usr/bin/log stream`. `--level info` is required to include the
-/// HIDE/SHOW decisions (which are logged at `.info`); warnings and
-/// errors come through at default level. For history, use `log show`
-/// directly.
+/// `/usr/bin/log stream`. An optional category argument narrows the
+/// stream to one of `controller`, `adapter`, or `general`. `adapter`
+/// uses `--level debug` because subprocess output is logged there;
+/// the rest stay at `info`. For history, use `log show` directly.
 func runLogs(args: [String]) -> Never {
-    if let extra = args.first {
-        die("unknown argument for logs: '\(extra)' — try: houdini logs")
+    if args.count > 1 {
+        die("too many arguments for logs — try: houdini logs [controller|adapter|general]")
+    }
+
+    let (category, level): (String?, String) = switch args.first {
+    case nil:          (nil,          "info")
+    case "controller": ("controller", "info")
+    case "adapter":    ("adapter",    "debug")
+    case "general":    ("general",    "info")
+    case let other?:   die("unknown category '\(other)' — expected: controller, adapter, general")
+    }
+
+    var predicate = "subsystem == \"\(Log.subsystem)\""
+    if let category {
+        predicate += " AND category == \"\(category)\""
     }
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/log")
     proc.arguments = [
         "stream",
-        "--predicate", "subsystem == \"\(Log.subsystem)\"",
-        "--level", "info",
+        "--predicate", predicate,
+        "--level", level,
         "--style", "compact",
     ]
 
@@ -191,6 +204,8 @@ func runLogs(args: [String]) -> Never {
         return src
     }
 
+    print("Streaming houdini logs. Press Ctrl-C to exit.")
+    fflush(stdout) // ensure the banner precedes log stream's own output
     do {
         try proc.run()
     } catch {
@@ -213,8 +228,11 @@ func usage() {
       houdini                   Run the daemon (invoked by brew services)
       houdini status            Print frontmost/Now-Playing state and the
                                 hide/show decision the daemon would make
-      houdini logs              Stream houdini's unified-log entries
-                                (wraps `log stream --predicate …`)
+      houdini logs [category]   Stream houdini's unified-log entries.
+                                Optional category narrows the stream:
+                                  controller  HIDE/SHOW decisions
+                                  adapter     mediaremote-adapter output
+                                  general     startup, shutdown, warnings
       houdini version           Print version
       houdini help              Print this help
 

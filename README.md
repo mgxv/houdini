@@ -51,8 +51,10 @@ Running the binary directly `houdini` is useful for debugging; `brew services` i
 ```bash
 houdini status                    # print frontmost / Now-Playing state and the
                                   # hide/show decision the daemon would make
-houdini logs                      # stream houdini's unified-log entries
-                                  # (wraps `log stream --predicate …`)
+houdini logs [category]           # stream houdini's unified-log entries
+                                  # (wraps `log stream --predicate …`);
+                                  # optional category: controller, adapter,
+                                  # or general
 houdini version                   # print version
 houdini help                      # full usage
 ```
@@ -121,13 +123,14 @@ brew services start houdini
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`:
 
 - `controller` category — HIDE/SHOW decisions (at `info` level)
-- `adapter` category — output from the mediaremote-adapter subprocess (at `debug`; add `--level debug` to `log stream` to see it)
+- `adapter` category — output from the mediaremote-adapter subprocess (at `debug`; surface it with `houdini logs adapter`)
 - `general` category — startup/shutdown notices, warnings, errors
 
 The system handles retention and rotation — no files on disk to manage.
 
 ```bash
-houdini logs                                              # live stream
+houdini logs                                              # live stream (all categories)
+houdini logs adapter                                      # subprocess output (debug level)
 log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
 ```
 
