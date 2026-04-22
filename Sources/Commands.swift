@@ -208,12 +208,21 @@ func runLogs(args: [String]) -> Never {
     // main thread is about to block in waitUntilExit, so a .main-queued
     // source would never fire) that explicitly terminate the child;
     // waitUntilExit then returns and we exit with its status.
+    //
+    // The event-handler closure is hoisted into its own explicitly-
+    // typed `@Sendable () -> Void` binding so it does NOT inherit
+    // `@MainActor` from the enclosing `runLogs` function. Without that,
+    // Swift 6's runtime isolation check traps with SIGTRAP when the
+    // handler fires on `.global()` (the assert is "I should be on main
+    // but I'm on default-qos"). `proc` is Sendable on macOS 15+, so
+    // capturing it in a non-isolated @Sendable closure is legitimate.
+    let onSignal: @Sendable () -> Void = {
+        if proc.isRunning { proc.terminate() }
+    }
     let signalSources: [DispatchSourceSignal] = [SIGINT, SIGTERM].map { sig in
         signal(sig, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
-        src.setEventHandler {
-            if proc.isRunning { proc.terminate() }
-        }
+        src.setEventHandler(handler: onSignal)
         src.resume()
         return src
     }
