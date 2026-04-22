@@ -202,6 +202,11 @@ git remote get-url origin >/dev/null 2>&1 \
     || die "no 'origin' remote configured"
 [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] \
     || die "not on main (checkout main before releasing)"
+# Refresh stat info in the index before `diff-index` — without this,
+# a file whose mtime/ctime changed but whose content matches HEAD can
+# falsely register as "dirty" (git status auto-refreshes; diff-index
+# does not).
+git update-index --refresh >/dev/null || true
 git diff-index --quiet HEAD -- \
     || die "working tree has uncommitted changes"
 git fetch --quiet origin main
@@ -214,6 +219,8 @@ step "Checking git state (tap)"
 tap git remote get-url origin >/dev/null 2>&1 \
     || die "tap has no 'origin' remote"
 TAP_BRANCH="$(tap git rev-parse --abbrev-ref HEAD)"
+# Same stale-stat refresh as above, applied to the tap clone.
+tap git update-index --refresh >/dev/null || true
 tap git diff-index --quiet HEAD -- \
     || die "tap working tree has uncommitted changes"
 tap git fetch --quiet origin "$TAP_BRANCH"
