@@ -34,7 +34,7 @@ final class Controller: NSObject {
     /// `frontPID` and `nowPlayingPID` are distinct types (not just
     /// distinct values) so the compiler blocks accidentally swapping
     /// them.
-    private struct Snapshot: Equatable, Sendable {
+    private struct Snapshot: Equatable {
         let frontPID: FrontmostPID?
         let frontName: String
         let fullScreen: Bool

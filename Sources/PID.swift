@@ -9,17 +9,17 @@
 
 import Foundation
 
-// macOS tracks, for every process, the user-facing app it acts on
-// behalf of (the "responsible process") — e.g. Safari's WebKit GPU
-// helper resolves to Safari. Same mechanism TCC uses to attribute a
-// camera prompt to Safari when the request came from a WebKit
-// content process. Not in a public SDK header, but present and stable
-// in libsystem_coreservices since 10.12.
+/// macOS tracks, for every process, the user-facing app it acts on
+/// behalf of (the "responsible process") — e.g. Safari's WebKit GPU
+/// helper resolves to Safari. Same mechanism TCC uses to attribute a
+/// camera prompt to Safari when the request came from a WebKit
+/// content process. Not in a public SDK header, but present and stable
+/// in libsystem_coreservices since 10.12.
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
 private func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
 
 /// PID of the frontmost (focused) application.
-struct FrontmostPID: Hashable, Sendable {
+struct FrontmostPID: Hashable {
     let rawValue: pid_t
     init(_ rawValue: pid_t) {
         self.rawValue = rawValue
@@ -28,7 +28,7 @@ struct FrontmostPID: Hashable, Sendable {
 
 /// PID of the application currently owning the system Now Playing
 /// widget (i.e. the media source).
-struct NowPlayingPID: Hashable, Sendable {
+struct NowPlayingPID: Hashable {
     let rawValue: pid_t
     init(_ rawValue: pid_t) {
         self.rawValue = rawValue

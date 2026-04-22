@@ -27,7 +27,7 @@ actor AdapterClient {
     /// a `data` event. `pid` is nil when Now Playing has no current
     /// source (i.e. nothing has ever played, or the last source exited).
     typealias UpdateHandler = @Sendable @MainActor (
-        _ playing: Bool, _ pid: NowPlayingPID?, _ bundle: String?
+        _ playing: Bool, _ pid: NowPlayingPID?, _ bundle: String?,
     ) -> Void
 
     /// Adapter `stream` flags:
@@ -101,7 +101,9 @@ actor AdapterClient {
         if process.isRunning { process.terminate() }
     }
 
-    private func markStopping() { stopping = true }
+    private func markStopping() {
+        stopping = true
+    }
 
     private func handleTermination(status: Int32) {
         guard !stopping else { return }
@@ -158,7 +160,7 @@ actor AdapterClient {
 /// The fields we extract from an adapter `data` event. Missing or
 /// wrong-typed fields fall back to safe defaults, matching the
 /// behavior of the original dict-based extraction.
-private struct AdapterEvent: Sendable {
+private struct AdapterEvent {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
@@ -179,7 +181,7 @@ private struct AdapterEvent: Sendable {
 /// One-shot Now Playing snapshot returned by `fetchNowPlayingOnce`.
 /// `pid == nil` means no app currently owns the Now Playing widget
 /// (the adapter emits the literal JSON `null` in that case).
-struct NowPlayingSnapshot: Sendable {
+struct NowPlayingSnapshot {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?

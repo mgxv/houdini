@@ -180,11 +180,11 @@ func runLogs(args: [String]) -> Never {
     }
 
     let (category, level): (String?, String) = switch args.first {
-    case nil:          (nil,          "info")
+    case nil: (nil, "info")
     case "controller": ("controller", "info")
-    case "adapter":    ("adapter",    "debug")
-    case "general":    ("general",    "info")
-    case let other?:   die("unknown category '\(other)' — expected: controller, adapter, general")
+    case "adapter": ("adapter", "debug")
+    case "general": ("general", "info")
+    case let other?: die("unknown category '\(other)' — expected: controller, adapter, general")
     }
 
     var predicate = "subsystem == \"\(Log.subsystem)\""

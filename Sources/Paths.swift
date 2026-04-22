@@ -5,7 +5,7 @@ import Foundation
 
 /// Filesystem paths the daemon needs at runtime, resolved by
 /// `locateArtifacts()`.
-struct AdapterArtifacts: Sendable {
+struct AdapterArtifacts {
     /// Absolute path to `mediaremote-adapter.pl`.
     let scriptPath: String
     /// Absolute path to `MediaRemoteAdapter.framework`.
