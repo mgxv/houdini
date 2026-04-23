@@ -9,19 +9,34 @@ import Cocoa
 /// single source of truth for the decision — both the daemon's
 /// evaluation loop and the `status` subcommand call it, so they can't
 /// drift apart.
+///
+/// Two identity checks run in parallel for the "same app" test:
+///   1. Responsibility-PID mapping via the kernel syscall
+///      (`FrontmostPID.isSameProcess(as:)`), which handles helper
+///      processes for any framework without adapter cooperation.
+///   2. The frontmost app's bundle identifier matches the Now Playing
+///      source's `parentApplicationBundleIdentifier`. This is a direct
+///      assertion from MediaRemote about who owns the media, so it
+///      keeps houdini working for browsers even if the private
+///      responsibility syscall regresses.
 func shouldHideMenuBar(
     fullScreen: Bool,
     isPlaying: Bool,
     frontPID: FrontmostPID?,
+    frontBundle: String?,
     nowPlayingPID: NowPlayingPID?,
+    nowPlayingParentBundle: String?,
 ) -> Bool {
-    guard fullScreen,
-          isPlaying,
-          let frontPID,
-          let nowPlayingPID,
-          frontPID.isSameProcess(as: nowPlayingPID)
-    else { return false }
-    return true
+    guard fullScreen, isPlaying, let frontPID, let nowPlayingPID else {
+        return false
+    }
+    if frontPID.isSameProcess(as: nowPlayingPID) { return true }
+    if let frontBundle, let parent = nowPlayingParentBundle,
+       !parent.isEmpty, parent == frontBundle
+    {
+        return true
+    }
+    return false
 }
 
 @MainActor
@@ -37,16 +52,20 @@ final class Controller: NSObject {
     private struct Snapshot: Equatable {
         let frontPID: FrontmostPID?
         let frontName: String
+        let frontBundle: String?
         let fullScreen: Bool
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
+        let nowPlayingParentBundle: String?
 
         var shouldHide: Bool {
             shouldHideMenuBar(
                 fullScreen: fullScreen,
                 isPlaying: isPlaying,
                 frontPID: frontPID,
+                frontBundle: frontBundle,
                 nowPlayingPID: nowPlayingPID,
+                nowPlayingParentBundle: nowPlayingParentBundle,
             )
         }
     }
@@ -55,6 +74,7 @@ final class Controller: NSObject {
     private var isPlaying: Bool = false
     private var nowPlayingPID: NowPlayingPID?
     private var nowPlayingBundle: String?
+    private var nowPlayingParentBundle: String?
     private var lastSnapshot: Snapshot?
 
     private lazy var axWatcher = AXWatcher { [weak self] in
@@ -82,10 +102,19 @@ final class Controller: NSObject {
 
     /// Called by AdapterClient whenever the Now Playing state changes.
     /// `pid` is nil when Now Playing has no current source.
-    func updateMedia(playing: Bool, pid: NowPlayingPID?, bundle: String?) {
+    /// `parentBundle` is the `parentApplicationBundleIdentifier` from
+    /// the event — nil for most apps, set for helper processes that
+    /// delegate to a user-facing parent (e.g. WebKit.GPU → Safari).
+    func updateMedia(
+        playing: Bool,
+        pid: NowPlayingPID?,
+        bundle: String?,
+        parentBundle: String?,
+    ) {
         isPlaying = playing
         nowPlayingPID = pid
         nowPlayingBundle = bundle
+        nowPlayingParentBundle = parentBundle
         evaluate()
     }
 
@@ -105,28 +134,49 @@ final class Controller: NSObject {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let frontName = frontApp?.localizedName ?? "(unknown)"
+        let frontBundle = frontApp?.bundleIdentifier
         axWatcher.attach(pid: frontPID?.rawValue)
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
+            frontBundle: frontBundle,
             fullScreen: isFocusedWindowFullScreen(pid: frontPID?.rawValue),
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
+            nowPlayingParentBundle: nowPlayingParentBundle,
         )
     }
 
+    /// Two-line log format: a scannable headline plus a flat, peer-
+    /// keyed detail line. Indent on line two aligns with the frontmost
+    /// name on line one, so the event reads as one visual block in
+    /// `houdini logs controller`. The np sub-block (`npPID` / `np` /
+    /// `resp` / `parent`) is omitted entirely when nothing owns Now
+    /// Playing — `resp=-` and `parent=-` are noise without an npPID to
+    /// resolve.
     private func logSnapshot(_ snap: Snapshot) {
         let label = snap.shouldHide ? "HIDE" : "SHOW"
-        let nowPlaying = nowPlayingBundle ?? "-"
+        let fullScreenWord = snap.fullScreen ? "fullscreen" : "windowed"
+        let playingWord = snap.isPlaying ? "playing" : "paused"
+        let headline = "\(label)  \(snap.frontName)  [\(fullScreenWord), \(playingWord)]"
+
         let frontPIDStr = snap.frontPID?.description ?? "-"
-        let nowPlayingPIDStr = snap.nowPlayingPID?.description ?? "-"
-        let message = "\(label)  "
-            + "front=\(snap.frontName)  "
-            + "fullScreen=\(snap.fullScreen)  "
-            + "playing=\(snap.isPlaying)  "
-            + "frontPID=\(frontPIDStr)  "
-            + "nowPlaying=\(nowPlaying)(pid=\(nowPlayingPIDStr))"
+        let details: String
+        if let nowPlayingPID = snap.nowPlayingPID {
+            let respStr = nowPlayingPID.responsiblePID.map(String.init) ?? "-"
+            let parentStr = snap.nowPlayingParentBundle ?? "-"
+            let npBundle = nowPlayingBundle ?? "-"
+            details = "frontPID=\(frontPIDStr)"
+                + "  npPID=\(nowPlayingPID.description)"
+                + "  np=\(npBundle)"
+                + "  resp=\(respStr)"
+                + "  parent=\(parentStr)"
+        } else {
+            details = "frontPID=\(frontPIDStr)  (no Now Playing source)"
+        }
+
+        let message = "\(headline)\n      \(details)"
         Log.controller.info("\(message, privacy: .public)")
     }
 }

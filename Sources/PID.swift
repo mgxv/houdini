@@ -14,9 +14,11 @@ import Foundation
 /// helper resolves to Safari. Same mechanism TCC uses to attribute a
 /// camera prompt to Safari when the request came from a WebKit
 /// content process. Not in a public SDK header, but present and stable
-/// in libsystem_coreservices since 10.12.
+/// in libsystem_coreservices since 10.12. The `@_silgen_name` binds
+/// this Swift wrapper to the C symbol, so we can pick any readable
+/// Swift name without affecting the link.
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
-private func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
+private func responsibleProcess(for pid: pid_t) -> pid_t
 
 /// PID of the frontmost (focused) application.
 struct FrontmostPID: Hashable {
@@ -38,16 +40,64 @@ struct NowPlayingPID: Hashable {
 extension FrontmostPID {
     /// Whether this frontmost PID refers to the same OS process as
     /// the given Now Playing PID, or to the app that owns it.
-    /// Safari (and any WebKit-based browser) routes media through an
-    /// out-of-process helper — the Now Playing PID is the helper, not
-    /// the visible app. A strict PID match would miss that case, so we
-    /// fall back to the OS's responsibility mapping.
+    ///
+    /// Browsers (Safari, Chrome, Firefox, etc.) route media through
+    /// helper processes — and during fullscreen video may also promote
+    /// a *different* helper to the foreground. Both PIDs can therefore
+    /// be helpers delegating up to the same responsible app, so we
+    /// resolve both sides and accept a match via any of three paths:
+    ///
+    ///   1. Now Playing helper's responsible process is us (classic
+    ///      WebKit case with Safari.app in the foreground).
+    ///   2. We're a helper whose responsible process is the Now Playing
+    ///      app (inverse of the above).
+    ///   3. Both sides are helpers of a common responsible app
+    ///      (Safari fullscreen helper + media helper, for example).
+    ///
     /// Callers must use this explicitly — the two types are
     /// deliberately not `Equatable` across roles.
     func isSameProcess(as other: NowPlayingPID) -> Bool {
         if rawValue == other.rawValue { return true }
-        let responsible = responsibility_get_pid_responsible_for_pid(other.rawValue)
-        return responsible > 0 && responsible == rawValue
+        // The user-facing app each side acts on behalf of, per the
+        // kernel's responsibility mapping. Returns 0 for processes the
+        // system doesn't track, or the PID itself when the process is
+        // not delegating for anyone.
+        let frontmostResponsiblePID = responsibleProcess(for: rawValue)
+        let nowPlayingResponsiblePID = responsibleProcess(for: other.rawValue)
+        // Path 1: Now Playing is a helper that delegates up to us.
+        if nowPlayingResponsiblePID > 0,
+           nowPlayingResponsiblePID == rawValue
+        {
+            return true
+        }
+        // Path 2: we're a helper that delegates up to the Now Playing app.
+        if frontmostResponsiblePID > 0,
+           frontmostResponsiblePID == other.rawValue
+        {
+            return true
+        }
+        // Path 3: both sides are helpers of the same user-facing app.
+        if frontmostResponsiblePID > 0,
+           frontmostResponsiblePID == nowPlayingResponsiblePID
+        {
+            return true
+        }
+        return false
+    }
+}
+
+extension NowPlayingPID {
+    /// OS-reported responsible process for this PID, or nil if the
+    /// syscall returned 0 (not tracked) or the process's own PID
+    /// (no delegation). Used to annotate log lines so a failed
+    /// `isSameProcess` check is diagnosable without a rebuild.
+    var responsiblePID: pid_t? {
+        let resolved = responsibleProcess(for: rawValue)
+        // 0 means the OS doesn't track this process; equal to our own
+        // PID means we're not delegating for anyone. Neither is worth
+        // reporting as a distinct "responsible app".
+        guard resolved > 0, resolved != rawValue else { return nil }
+        return resolved
     }
 }
 

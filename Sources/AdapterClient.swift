@@ -26,8 +26,16 @@ actor AdapterClient {
     /// Callback delivered on the main actor whenever the adapter emits
     /// a `data` event. `pid` is nil when Now Playing has no current
     /// source (i.e. nothing has ever played, or the last source exited).
+    /// `parentBundle` is the Now Playing app's
+    /// `parentApplicationBundleIdentifier` — set for helper processes
+    /// (e.g. `com.apple.Safari` when the pid belongs to WebKit.GPU) and
+    /// used alongside the responsibility-PID check to identify the
+    /// logical owning app.
     typealias UpdateHandler = @Sendable @MainActor (
-        _ playing: Bool, _ pid: NowPlayingPID?, _ bundle: String?,
+        _ playing: Bool,
+        _ pid: NowPlayingPID?,
+        _ bundle: String?,
+        _ parentBundle: String?,
     ) -> Void
 
     /// Adapter `stream` flags:
@@ -156,7 +164,9 @@ actor AdapterClient {
         }
         guard let event = AdapterEvent(from: parsed) else { return }
         let handler = onUpdate
-        Task { @MainActor in handler(event.playing, event.pid, event.bundle) }
+        Task { @MainActor in
+            handler(event.playing, event.pid, event.bundle, event.parentBundle)
+        }
     }
 }
 
@@ -167,6 +177,7 @@ private struct AdapterEvent {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
+    let parentBundle: String?
 
     /// Extracts a `data` event from the adapter's parsed JSON object.
     /// Returns nil for any other event type so the caller can silently
@@ -178,16 +189,21 @@ private struct AdapterEvent {
         pid = (payload["processIdentifier"] as? Int)
             .map { NowPlayingPID(pid_t($0)) }
         bundle = payload["bundleIdentifier"] as? String
+        parentBundle = payload["parentApplicationBundleIdentifier"] as? String
     }
 }
 
 /// One-shot Now Playing snapshot returned by `fetchNowPlayingOnce`.
 /// `pid == nil` means no app currently owns the Now Playing widget
 /// (the adapter emits the literal JSON `null` in that case).
+/// `parentBundle` mirrors the streaming event's
+/// `parentApplicationBundleIdentifier` — present for helper-process
+/// owners (e.g. WebKit.GPU under Safari).
 struct NowPlayingSnapshot {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
+    let parentBundle: String?
 }
 
 /// Synchronously invokes `mediaremote-adapter.pl get` and parses the
@@ -229,7 +245,7 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let trimmed = (String(data: data, encoding: .utf8) ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty || trimmed == "null" {
-        return NowPlayingSnapshot(playing: false, pid: nil, bundle: nil)
+        return NowPlayingSnapshot(playing: false, pid: nil, bundle: nil, parentBundle: nil)
     }
     guard let jsonData = trimmed.data(using: .utf8),
           let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
@@ -241,5 +257,6 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
         playing: (parsed["playing"] as? Bool) ?? false,
         pid: (parsed["processIdentifier"] as? Int).map { NowPlayingPID(pid_t($0)) },
         bundle: parsed["bundleIdentifier"] as? String,
+        parentBundle: parsed["parentApplicationBundleIdentifier"] as? String,
     )
 }

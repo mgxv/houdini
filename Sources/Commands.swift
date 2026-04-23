@@ -27,13 +27,23 @@ func runForeground() {
     // If the one-shot fails, we skip priming and the initial line just
     // shows empty Now Playing state — not worth aborting startup over.
     if let np = fetchNowPlayingOnce(artifacts: artifacts) {
-        controller.updateMedia(playing: np.playing, pid: np.pid, bundle: np.bundle)
+        controller.updateMedia(
+            playing: np.playing,
+            pid: np.pid,
+            bundle: np.bundle,
+            parentBundle: np.parentBundle,
+        )
     }
 
     let adapter = AdapterClient(
         artifacts: artifacts,
-        onUpdate: { @MainActor playing, pid, bundle in
-            controller.updateMedia(playing: playing, pid: pid, bundle: bundle)
+        onUpdate: { @MainActor playing, pid, bundle, parentBundle in
+            controller.updateMedia(
+                playing: playing,
+                pid: pid,
+                bundle: bundle,
+                parentBundle: parentBundle,
+            )
         },
     )
 
@@ -94,6 +104,7 @@ func runStatus() -> Never {
     let frontApp = NSWorkspace.shared.frontmostApplication
     let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
     let frontName = frontApp?.localizedName ?? "-"
+    let frontBundle = frontApp?.bundleIdentifier
     let frontPIDStr = frontPID?.description ?? "-"
 
     // Fullscreen requires Accessibility. Use the non-prompting check so
@@ -113,7 +124,9 @@ func runStatus() -> Never {
             fullScreen: fullscreen,
             isPlaying: np?.playing ?? false,
             frontPID: frontPID,
+            frontBundle: frontBundle,
             nowPlayingPID: np?.pid,
+            nowPlayingParentBundle: np?.parentBundle,
         )
         if shouldHide { return ("HIDE", nil) }
         return ("SHOW", showReason(frontPID: frontPID, fullscreen: fullscreen, np: np))
