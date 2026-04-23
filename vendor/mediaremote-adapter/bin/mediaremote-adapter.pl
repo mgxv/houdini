@@ -56,6 +56,9 @@ OPTIONS:
     --no-diff: Disable diffing and always dump all metadata
     --debounce=N: Delay in milliseconds to prevent spam (0 by default)
   get, stream
+    --no-artwork: Omits the "artworkData" and "artworkMimeType" keys from the
+      output. Useful for consumers that don't render artwork, since artwork
+      payloads can exceed a megabyte per event.
     --micros: Replaces the following time keys with microsecond equivalents
       "duration" -> "durationMicros"
       "elapsedTime" -> "elapsedTimeMicros"
@@ -196,6 +199,9 @@ elsif ($function_name eq "stream") {
     elsif ($key eq "micros") {
       set_env_option($options, $key);
     }
+    elsif ($key eq "no-artwork") {
+      set_env_option($options, $key);
+    }
     elsif ($key eq "human-readable" || $key eq "h") {
       set_env_option($options, "human-readable");
     }
@@ -212,6 +218,9 @@ elsif ($function_name eq "get") {
   my $options = parse_options(0);
   foreach my $key (keys %{$options}) {
     if ($key eq "micros") {
+      set_env_option($options, $key);
+    }
+    elsif ($key eq "no-artwork") {
       set_env_option($options, $key);
     }
     elsif ($key eq "human-readable" || $key eq "h") {

@@ -35,7 +35,12 @@ actor AdapterClient {
     ///    to reconstruct deltas.
     /// - `--debounce=200` collapses bursts (e.g. scrubbing) to at most
     ///    one event per 200 ms.
-    private static let streamArgs: [String] = ["stream", "--no-diff", "--debounce=200"]
+    /// - `--no-artwork` omits the `artworkData`/`artworkMimeType` fields.
+    ///    Houdini never reads them, and base64-encoded TIFF artwork can
+    ///    exceed the stdout line buffer on track changes.
+    private static let streamArgs: [String] = [
+        "stream", "--no-diff", "--debounce=200", "--no-artwork",
+    ]
 
     /// Max bytes we'll buffer for a single stdout line. Sized well above
     /// any realistic event — stream-mode JSON with base64 artwork data
@@ -202,7 +207,7 @@ struct NowPlayingSnapshot {
 func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-    process.arguments = [artifacts.scriptPath, artifacts.frameworkPath, "get"]
+    process.arguments = [artifacts.scriptPath, artifacts.frameworkPath, "get", "--no-artwork"]
     let stdoutPipe = Pipe()
     process.standardOutput = stdoutPipe
     process.standardError = FileHandle.standardError
