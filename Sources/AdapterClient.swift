@@ -42,14 +42,14 @@ actor AdapterClient {
         "stream", "--no-diff", "--debounce=200", "--no-artwork",
     ]
 
-    /// Max bytes we'll buffer for a single stdout line. Sized well above
-    /// any realistic event — stream-mode JSON with base64 artwork data
-    /// tops out around a megabyte in the wild — but small enough that a
-    /// runaway subprocess can't exhaust memory.
-    private static let stdoutLineLimit = 2 * 1024 * 1024
+    /// Max bytes we'll buffer for a single line before treating the
+    /// subprocess as broken. `--no-artwork` keeps realistic stream-mode
+    /// events under a kilobyte, so anything past this cap is a bug.
+    /// Exceeding it is fatal — launchd will restart the daemon.
+    private static let stdoutLineLimit = 256 * 1024
 
-    /// Max bytes for a single stderr line. Stderr carries short log
-    /// messages from the adapter, so this is much tighter.
+    /// Stderr carries short log messages from the adapter; same fatal
+    /// treatment but with a tighter cap.
     private static let stderrLineLimit = 64 * 1024
 
     // Process and Pipe are declared Sendable by the Foundation SDK on
@@ -58,8 +58,8 @@ actor AdapterClient {
     private let process = Process()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
-    private var stdoutBuffer = LineBuffer(limit: stdoutLineLimit)
-    private var stderrBuffer = LineBuffer(limit: stderrLineLimit)
+    private var stdoutBuffer = LineBuffer()
+    private var stderrBuffer = LineBuffer()
     private var stopping = false
     private let onUpdate: UpdateHandler
 
@@ -118,35 +118,33 @@ actor AdapterClient {
     }
 
     /// Accumulates a stdout chunk and flushes any complete (newline-
-    /// terminated) lines to `handleStdoutLine`.
+    /// terminated) lines to `handleStdoutLine`. If an in-progress line
+    /// exceeds the cap, the subprocess is malfunctioning — `die` and
+    /// let launchd restart us.
     private func ingestStdout(_ chunk: Data) {
-        stdoutBuffer.ingest(
-            chunk,
-            handler: { self.handleStdoutLine($0) },
-            onOverflow: {
-                let message = "adapter stdout exceeded \(Self.stdoutLineLimit / 1024 / 1024) MiB without a newline; buffer reset. Further overflows suppressed until restart."
-                Task { @MainActor in warn(message) }
-            },
-        )
+        stdoutBuffer.ingest(chunk) { self.handleStdoutLine($0) }
+        if stdoutBuffer.pendingBytes > Self.stdoutLineLimit {
+            Task { @MainActor in
+                die("adapter stdout exceeded \(Self.stdoutLineLimit / 1024) KiB without a newline")
+            }
+        }
     }
 
     /// Accumulates a stderr chunk and forwards each complete line to
     /// the unified log under the "adapter" category at `.debug` level,
     /// so the default `houdini logs` stream stays focused on decisions
     /// and warnings. Surface it with `houdini logs adapter` when
-    /// diagnosing the subprocess.
+    /// diagnosing the subprocess. Same fatal-on-overflow policy as stdout.
     private func ingestStderr(_ chunk: Data) {
-        stderrBuffer.ingest(
-            chunk,
-            handler: { line in
-                let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
-                Log.adapter.debug("\(text, privacy: .public)")
-            },
-            onOverflow: {
-                let message = "adapter stderr exceeded \(Self.stderrLineLimit / 1024) KiB without a newline; buffer reset. Further overflows suppressed until restart."
-                Task { @MainActor in warn(message) }
-            },
-        )
+        stderrBuffer.ingest(chunk) { line in
+            let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
+            Log.adapter.debug("\(text, privacy: .public)")
+        }
+        if stderrBuffer.pendingBytes > Self.stderrLineLimit {
+            Task { @MainActor in
+                die("adapter stderr exceeded \(Self.stderrLineLimit / 1024) KiB without a newline")
+            }
+        }
     }
 
     private func handleStdoutLine(_ line: Data) {
