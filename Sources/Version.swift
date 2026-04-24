@@ -3,4 +3,4 @@
 // rewritten on bump). Edit this file directly only for a hand-patch;
 // normal version bumps go through release.sh.
 
-let version = "0.8.1"
+let version = "0.9.0"
