@@ -148,9 +148,14 @@ func runStatus() -> Never {
     // makes the terminal frontmost, so `front` and `decision` reflect
     // that rather than whatever the daemon is currently deciding.
     // Direct the user to the logs if they want the daemon's live view.
+    // The command is offset to the value column (10 spaces) so it
+    // aligns with other values and is visually easy to spot and copy.
     print("")
-    print("— the below reflect this terminal as frontmost; for the")
-    print("  daemon's live view, run `houdini logs controller`")
+    print("— `front:` and `decision:` below show this terminal's view,")
+    print("  not the daemon's. for the daemon's live decisions, run:")
+    print("")
+    print("          houdini logs controller")
+    print("")
     let fsStr = fullscreen.map { $0 ? "yes" : "no" } ?? "unknown"
     print("front:    \(frontName) (pid=\(frontPIDStr), fullscreen=\(fsStr))")
     print("decision: \(decision)")
