@@ -97,19 +97,19 @@ func runStatus() -> Never {
     let frontBundle = frontApp?.bundleIdentifier
     let frontPIDStr = frontPID?.description ?? "-"
 
-    // Fullscreen requires Accessibility. Use the non-prompting check so
-    // `status` has no side effects; report "unknown" if permission is
-    // missing rather than asking for it here.
-    let fullscreen: Bool? = isAccessibilityTrusted()
+    // Fullscreen requires Accessibility. Use the non-prompting check
+    // so `status` has no side effects; report "unknown" if permission
+    // is missing rather than asking for it here. `axTrusted` is read
+    // once so the `perms:` line and the fullscreen branch agree.
+    let axTrusted = isAccessibilityTrusted()
+    let fullscreen: Bool? = axTrusted
         ? isFocusedWindowFullScreen(pid: frontPID?.rawValue)
         : nil
 
     let np = fetchNowPlayingOnce(artifacts: artifacts)
 
-    let (decision, reason): (String, String?) = {
-        guard let fullscreen else {
-            return ("unknown", "Accessibility permission not granted — run `houdini` once to prompt")
-        }
+    let decision: String = {
+        guard let fullscreen else { return "unknown" }
         let shouldHide = shouldHideMenuBar(
             fullScreen: fullscreen,
             isPlaying: np?.playing ?? false,
@@ -118,13 +118,20 @@ func runStatus() -> Never {
             nowPlayingPID: np?.pid,
             nowPlayingParentBundle: np?.parentBundle,
         )
-        if shouldHide { return ("HIDE", nil) }
-        return ("SHOW", showReason(frontPID: frontPID, fullscreen: fullscreen, np: np))
+        return shouldHide ? "HIDE" : "SHOW"
     }()
 
-    let fsStr = fullscreen.map { $0 ? "yes" : "no" } ?? "unknown"
+    // Focus-independent block: true regardless of which app is
+    // frontmost when `status` is invoked. Print first so these are
+    // easy to spot even in a long output.
+    print("version:  houdini \(version)")
     print("daemon:   \(probeDaemonRunning() ? "running" : "not running")")
-    print("front:    \(frontName) (pid=\(frontPIDStr), fullscreen=\(fsStr))")
+    if axTrusted {
+        print("perms:    Accessibility granted")
+    } else {
+        print("perms:    Accessibility not granted")
+        print("          brew services restart houdini")
+    }
     switch np {
     case .none:
         print("playing:  (adapter failed)")
@@ -136,29 +143,18 @@ func runStatus() -> Never {
         let playStr = snap.playing ? "yes" : "no"
         print("playing:  \(bundle) (pid=\(pidStr), playing=\(playStr))")
     }
-    if let reason {
-        print("decision: \(decision)  (\(reason))")
-    } else {
-        print("decision: \(decision)")
-    }
-    exit(0)
-}
 
-/// Explains why `shouldHide` is false, picking the first unmet
-/// precondition in logical order so the message names something the
-/// user can act on.
-@MainActor
-private func showReason(
-    frontPID: FrontmostPID?,
-    fullscreen: Bool,
-    np: NowPlayingSnapshot?,
-) -> String {
-    if frontPID == nil { return "no frontmost app" }
-    if !fullscreen { return "frontmost is not fullscreen" }
-    guard let np else { return "adapter failed — cannot determine Now Playing" }
-    if np.pid == nil { return "nothing is using Now Playing" }
-    if !np.playing { return "the Now Playing source is paused" }
-    return "frontmost and Now Playing are different processes"
+    // Focus-dependent block: running `houdini status` from a terminal
+    // makes the terminal frontmost, so `front` and `decision` reflect
+    // that rather than whatever the daemon is currently deciding.
+    // Direct the user to the logs if they want the daemon's live view.
+    print("")
+    print("— the below reflect this terminal as frontmost; for the")
+    print("  daemon's live view, run `houdini logs controller`")
+    let fsStr = fullscreen.map { $0 ? "yes" : "no" } ?? "unknown"
+    print("front:    \(frontName) (pid=\(frontPIDStr), fullscreen=\(fsStr))")
+    print("decision: \(decision)")
+    exit(0)
 }
 
 // MARK: - version
