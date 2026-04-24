@@ -93,10 +93,20 @@ final class Controller: NSObject {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil,
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(onSpaceChange(_:)),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+        )
         evaluate()
     }
 
     @objc private func onFrontAppChange(_: Notification) {
+        evaluate()
+    }
+
+    @objc private func onSpaceChange(_: Notification) {
         evaluate()
     }
 
