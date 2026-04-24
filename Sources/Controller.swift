@@ -152,41 +152,62 @@ final class Controller: NSObject {
         )
     }
 
-    /// Two-slot structured headline plus a flat, peer-keyed detail
-    /// line. Leading `\n` puts the unified-log prefix on its own line;
-    /// trailing `\n` adds a blank line between events. Each slot
-    /// attributes its state words to the correct subject —
-    /// `fullscreen`/`windowed` to the frontmost app, `playing`/`paused`
-    /// to the Now Playing source, which may be a different app.
+    /// JSON-encoded snapshot, pretty-printed via `JSONEncoder`. Field
+    /// order is the property-declaration order of the payload structs
+    /// below (CodingKeys are synthesized in the same order). Leading
+    /// `\n` puts the JSON body on its own line under the unified-log
+    /// prefix; trailing `\n` adds a blank line between events.
     private func logSnapshot(_ snap: Snapshot) {
-        let label = snap.shouldHide ? "HIDE" : "SHOW"
-        let fsWord = snap.fullScreen ? "fullscreen" : "windowed"
-        let front = "front=\(snap.frontName)[\(fsWord)]"
-
-        let frontPIDStr = snap.frontPID?.description ?? "-"
-        let np: String
-        let details: String
-        if let nowPlayingPID = snap.nowPlayingPID {
-            let playWord = snap.isPlaying ? "playing" : "paused"
-            let npName = snap.nowPlayingParentBundle.flatMap { $0.isEmpty ? nil : $0 }
-                ?? snap.nowPlayingBundle
-                ?? "pid\(nowPlayingPID)"
-            np = "np=\(npName)[\(playWord)]"
-
-            let respStr = nowPlayingPID.responsiblePID.map(String.init) ?? "-"
-            let parentStr = snap.nowPlayingParentBundle ?? "-"
-            let npBundle = snap.nowPlayingBundle ?? "-"
-            details = "frontPID=\(frontPIDStr)"
-                + "  npPID=\(nowPlayingPID.description)"
-                + "  npBundle=\(npBundle)"
-                + "  resp=\(respStr)"
-                + "  parent=\(parentStr)"
-        } else {
-            np = "np=-"
-            details = "frontPID=\(frontPIDStr)  (no Now Playing source)"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(LogPayload(snap)),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            Log.controller.error("failed to encode snapshot for logging")
+            return
         }
+        Log.controller.info("\n\(json, privacy: .public)\n")
+    }
 
-        let message = "\n\(label)  \(front)  \(np)\n\(details)\n"
-        Log.controller.info("\(message, privacy: .public)")
+    private struct FrontPayload: Encodable {
+        let pid: pid_t?
+        let name: String
+        let bundle: String?
+        let fullscreen: Bool
+    }
+
+    private struct NowPlayingPayload: Encodable {
+        let pid: pid_t
+        let bundle: String?
+        let parentBundle: String?
+        let responsiblePID: pid_t?
+        let playing: Bool
+    }
+
+    private struct LogPayload: Encodable {
+        let shouldHide: Bool
+        let front: FrontPayload
+        let nowPlaying: NowPlayingPayload?
+
+        init(_ snap: Snapshot) {
+            shouldHide = snap.shouldHide
+            front = FrontPayload(
+                pid: snap.frontPID?.rawValue,
+                name: snap.frontName,
+                bundle: snap.frontBundle,
+                fullscreen: snap.fullScreen,
+            )
+            if let npPID = snap.nowPlayingPID {
+                nowPlaying = NowPlayingPayload(
+                    pid: npPID.rawValue,
+                    bundle: snap.nowPlayingBundle,
+                    parentBundle: snap.nowPlayingParentBundle,
+                    responsiblePID: npPID.responsiblePID,
+                    playing: snap.isPlaying,
+                )
+            } else {
+                nowPlaying = nil
+            }
+        }
     }
 }
