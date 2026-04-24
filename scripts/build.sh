@@ -1,16 +1,20 @@
 #!/bin/bash
-# Builds MediaRemoteAdapter.framework from vendored Obj-C sources,
-# then the houdini Swift binary.
+# build.sh — compile MediaRemoteAdapter.framework from vendored Obj-C
+# sources, then the houdini Swift binary.
 #
 # Layout:
-#   Setup         — shell options, cwd, constants
-#   Output helpers — color init, step/ok/info/kv/die, hsize, ERR trap
-#   Preflight     — required tools, Swift version, source tree
-#   Version       — read version from Sources/Version.swift
-#   Config report — print what we're about to build
-#   Build         — framework (compile → lay out → sign), then binary
-#   Install       — stage to $PREFIX if set (non-dev layout)
-#   Summary       — paths + sizes + elapsed
+#   Constants       — vendored paths, framework/binary names
+#   Output helpers  — color init, step/ok/info/kv/die, hsize, ERR trap
+#   Preflight       — required tools, Swift version, source tree
+#   Version         — read version from Sources/Version.swift
+#   Config report   — print what we're about to build
+#   Build           — framework (compile → lay out → sign), then binary
+#   Install         — stage to $PREFIX if set (non-dev layout)
+#   Summary         — paths + sizes + elapsed
+#
+# Usage:
+#   ./scripts/build.sh                          # dev build at project root
+#   PREFIX=/some/prefix ./scripts/build.sh      # staged install layout
 #
 # Env:
 #   PREFIX  install prefix. Unset = dev build at project root.
@@ -20,7 +24,7 @@ set -Eeuo pipefail
 shopt -s nullglob
 
 SCRIPT_NAME="$(basename "$0")"
-PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # ---------------------------------------------------------------------------

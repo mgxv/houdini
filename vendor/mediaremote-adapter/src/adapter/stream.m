@@ -142,7 +142,7 @@ extern void adapter_stream() {
     }
 
     NSString *no_diff_option = getEnvOption(@"no_diff");
-    NSString *no_artwork_option = getEnvOption(@"no_artwork");
+    NSString *no_artwork_option = getEnvOption(@"no-artwork");
     NSString *micros_option = getEnvOption(@"micros");
     NSString *human_readable_option = getEnvOption(@"human-readable");
 
@@ -288,12 +288,8 @@ extern void adapter_stream() {
                     @"com.vandenbe.MediaRemoteAdapter.TestClient"]) {
             return;
         }
-        NSMutableDictionary *converted =
-            convertNowPlayingInformation(information, convert_micros, false);
-        if (no_artwork) {
-            [converted removeObjectForKey:kMRAArtworkData];
-            [converted removeObjectForKey:kMRAArtworkMimeType];
-        }
+        NSMutableDictionary *converted = convertNowPlayingInformation(
+            information, convert_micros, false, no_artwork);
         // Transfer anything over from the existing live data.
         if (liveData[kMRAProcessIdentifier] != nil) {
             converted[kMRAProcessIdentifier] = liveData[kMRAProcessIdentifier];

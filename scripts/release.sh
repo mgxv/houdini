@@ -2,7 +2,7 @@
 # release.sh — publish a new houdini release.
 #
 # Flow (what the plan prompt shows the user):
-#   1. Sanity-build             (./build.sh; skip with --skip-build)
+#   1. Sanity-build             (scripts/build.sh; skip with --skip-build)
 #   2. Bump Sources/Version.swift → commit + push main
 #   3. Tag vX.Y.Z               → push tag (publishes the GitHub tarball)
 #   4. Fetch tarball            → compute sha256
@@ -18,10 +18,10 @@
 # `brew install` actually reads.
 #
 # Usage:
-#   ./release.sh 0.3.0
-#   ./release.sh 0.3.0 --yes         # skip the confirm prompt
-#   ./release.sh 0.3.0 --skip-build  # skip the sanity build
-#   ./release.sh --help
+#   ./scripts/release.sh 0.3.0
+#   ./scripts/release.sh 0.3.0 --yes         # skip the confirm prompt
+#   ./scripts/release.sh 0.3.0 --skip-build  # skip the sanity build
+#   ./scripts/release.sh --help
 #
 # Env:
 #   HOUDINI_TAP  path to the mgxv/homebrew-houdini clone
@@ -30,7 +30,7 @@
 set -Eeuo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
-PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ Usage: $SCRIPT_NAME <version> [--yes] [--skip-build]
 
 Options:
   --yes          Skip the interactive confirmation prompt.
-  --skip-build   Skip ./build.sh sanity check before releasing.
+  --skip-build   Skip scripts/build.sh sanity check before releasing.
   -h, --help     Show this message.
 
 Env:
@@ -193,7 +193,7 @@ done
 [ -f "$TAP_FORMULA" ]           || die "tap formula missing: $TAP_FORMULA"
 [ -f "$IN_REPO_FORMULA" ]       || die "in-repo formula missing: $IN_REPO_FORMULA"
 [ -f Sources/Version.swift ]    || die "Sources/Version.swift missing"
-[ -x ./build.sh ]               || die "./build.sh missing or not executable"
+[ -x scripts/build.sh ]         || die "scripts/build.sh missing or not executable"
 ok "tools + files present (tap at $TAP_DIR)"
 
 STAGE="preflight: git state (source)"
@@ -277,7 +277,7 @@ fi
 cat <<PLAN
 
 ${B}Plan${N}
-  1. $( [ $SKIP_BUILD -eq 1 ] && echo "(skipped) ")Sanity-build with ./build.sh
+  1. $( [ $SKIP_BUILD -eq 1 ] && echo "(skipped) ")Sanity-build with scripts/build.sh
   2. Bump Sources/Version.swift → commit "houdini $NEW_VERSION" → push main (this repo)
   3. Tag $TAG → push tag (this repo)
   4. Fetch $TARBALL_URL, compute sha256
@@ -301,7 +301,7 @@ fi
 if [ $SKIP_BUILD -eq 0 ]; then
     STAGE="sanity_build"
     step "Sanity-building"
-    run ./build.sh > /dev/null
+    run ./scripts/build.sh > /dev/null
     ok "build succeeded"
 else
     note "sanity build skipped"

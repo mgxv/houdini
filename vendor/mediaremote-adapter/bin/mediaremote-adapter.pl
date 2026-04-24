@@ -56,14 +56,14 @@ OPTIONS:
     --no-diff: Disable diffing and always dump all metadata
     --debounce=N: Delay in milliseconds to prevent spam (0 by default)
   get, stream
-    --no-artwork: Omits the "artworkData" and "artworkMimeType" keys from the
-      output. Useful for consumers that don't render artwork, since artwork
-      payloads can exceed a megabyte per event.
-    --micros: Replaces the following time keys with microsecond equivalents
+    --micros: Replaces the following time keys with microsecond equivalents:
       "duration" -> "durationMicros"
       "elapsedTime" -> "elapsedTimeMicros"
       "elapsedTimeNow" -> "elapsedTimeNowMicros"
       "timestamp" -> "timestampEpochMicros" (converted to epoch time)
+    --no-artwork: Omits "artworkData" and "artworkMimeType" from the payload.
+      Useful for consumers that do not render artwork, since this avoids
+      emitting several hundred kilobytes of base64 data per update.
     --human-readable, -h: Makes values human-readable. Use only for debugging.
       The JSON output is pretty-printed and the following keys are adapted:
       "artworkData" -> Binary data is truncated to a shorter representation

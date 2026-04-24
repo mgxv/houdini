@@ -8,12 +8,12 @@ class Houdini < Formula
   depends_on macos: :sequoia
 
   def install
-    # build.sh compiles the framework + binary and (via $PREFIX) stages:
+    # scripts/build.sh compiles the framework + binary and (via $PREFIX) stages:
     #   #{prefix}/bin/houdini
     #   #{prefix}/libexec/houdini/MediaRemoteAdapter.framework
     #   #{prefix}/libexec/houdini/vendor/
     ENV["PREFIX"] = prefix
-    system "./build.sh"
+    system "./scripts/build.sh"
   end
 
   # Keep-alive LaunchAgent. Logs go to the macOS unified log under

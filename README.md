@@ -140,8 +140,10 @@ Or open Console.app and filter on subsystem `com.github.mgxv.houdini`.
 ## Project layout
 
 ```
-build.sh              # Builds the framework + Swift binary (canonical path)
-release.sh            # Version bump → tag → formula update → tap mirror
+scripts/              # Build, release, and vendor-sync scripts
+  build.sh            # Builds the framework + Swift binary (canonical path)
+  release.sh          # Version bump → tag → formula update → tap mirror
+  sync.sh             # Refreshes vendor/ from the latest mediaremote-adapter release
 Formula/houdini.rb    # Homebrew formula
 Package.swift         # Optional SwiftPM manifest (for IDE indexing)
 Sources/              # Swift daemon + CLI (Swift 6, strict concurrency)

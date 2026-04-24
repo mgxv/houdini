@@ -57,6 +57,6 @@ func locateArtifacts() -> AdapterArtifacts {
     could not find MediaRemoteAdapter.framework + vendor/mediaremote-adapter/.
     Searched:
       \(searched)
-    Run ./build.sh, or set HOUDINI_LIBEXEC to the directory containing both.
+    Run ./scripts/build.sh, or set HOUDINI_LIBEXEC to the directory containing both.
     """)
 }
