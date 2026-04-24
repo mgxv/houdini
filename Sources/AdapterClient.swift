@@ -24,19 +24,12 @@ import Foundation
 
 actor AdapterClient {
     /// Callback delivered on the main actor whenever the adapter emits
-    /// a `data` event. `pid` is nil when Now Playing has no current
-    /// source (i.e. nothing has ever played, or the last source exited).
-    /// `parentBundle` is the Now Playing app's
-    /// `parentApplicationBundleIdentifier` — set for helper processes
-    /// (e.g. `com.apple.Safari` when the pid belongs to WebKit.GPU) and
-    /// used alongside the responsibility-PID check to identify the
-    /// logical owning app.
-    typealias UpdateHandler = @Sendable @MainActor (
-        _ playing: Bool,
-        _ pid: NowPlayingPID?,
-        _ bundle: String?,
-        _ parentBundle: String?,
-    ) -> Void
+    /// a `data` event. See `NowPlayingSnapshot` for field semantics —
+    /// in particular, `pid == nil` means nothing currently owns Now
+    /// Playing, and `parentBundle` is set for helper-process owners so
+    /// the controller's bundle-id identity check can match them to the
+    /// user-facing app.
+    typealias UpdateHandler = @Sendable @MainActor (NowPlayingSnapshot) -> Void
 
     /// Adapter `stream` flags:
     /// - `--no-diff` emits full state on every change, so we don't have
@@ -162,47 +155,48 @@ actor AdapterClient {
             Task { @MainActor in warn("ignored non-JSON line from adapter: \(preview)") }
             return
         }
-        guard let event = AdapterEvent(from: parsed) else { return }
+        guard let snapshot = NowPlayingSnapshot(streamEvent: parsed) else { return }
         let handler = onUpdate
-        Task { @MainActor in
-            handler(event.playing, event.pid, event.bundle, event.parentBundle)
-        }
+        Task { @MainActor in handler(snapshot) }
     }
 }
 
-/// The fields we extract from an adapter `data` event. Missing or
-/// wrong-typed fields fall back to safe defaults (`false` / `nil`).
-private struct AdapterEvent {
+/// What the adapter tells us about the current Now Playing source.
+/// Shared shape for both output modes:
+///
+/// - `stream` events come wrapped in a `{type, payload}` envelope and
+///   arrive continuously while the daemon runs.
+/// - `get` emits the bare payload dict (or the literal JSON `null`
+///   when nothing is playing) and is used by the `status` subcommand.
+///
+/// `pid == nil` means no app currently owns Now Playing. `bundle` is
+/// the PID's own bundle id; `parentBundle` is MediaRemote's assertion
+/// of the logical owning app and is set for helper-process owners
+/// (e.g. `com.apple.Safari` when the pid belongs to WebKit.GPU).
+/// Missing or wrong-typed fields fall back to safe defaults
+/// (`false` / `nil`).
+struct NowPlayingSnapshot {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
     let parentBundle: String?
 
-    /// Extracts a `data` event from the adapter's parsed JSON object.
-    /// Returns nil for any other event type so the caller can silently
-    /// ignore heartbeats, errors, etc.
-    init?(from object: [String: Any]) {
-        guard (object["type"] as? String) == "data" else { return nil }
-        let payload = (object["payload"] as? [String: Any]) ?? [:]
+    /// Parse from the bare payload dict that `get` mode emits.
+    init(payload: [String: Any]) {
         playing = (payload["playing"] as? Bool) ?? false
         pid = (payload["processIdentifier"] as? Int)
             .map { NowPlayingPID(pid_t($0)) }
         bundle = payload["bundleIdentifier"] as? String
         parentBundle = payload["parentApplicationBundleIdentifier"] as? String
     }
-}
 
-/// One-shot Now Playing snapshot returned by `fetchNowPlayingOnce`.
-/// `pid == nil` means no app currently owns the Now Playing widget
-/// (the adapter emits the literal JSON `null` in that case).
-/// `parentBundle` mirrors the streaming event's
-/// `parentApplicationBundleIdentifier` — present for helper-process
-/// owners (e.g. WebKit.GPU under Safari).
-struct NowPlayingSnapshot {
-    let playing: Bool
-    let pid: NowPlayingPID?
-    let bundle: String?
-    let parentBundle: String?
+    /// Parse from the `{type, payload}` envelope that `stream` mode
+    /// emits. Returns nil for non-`data` events so the caller can
+    /// silently ignore heartbeats, errors, etc.
+    init?(streamEvent: [String: Any]) {
+        guard (streamEvent["type"] as? String) == "data" else { return nil }
+        self.init(payload: (streamEvent["payload"] as? [String: Any]) ?? [:])
+    }
 }
 
 /// Synchronously invokes `mediaremote-adapter.pl get` and parses the
@@ -245,7 +239,7 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let trimmed = (String(data: data, encoding: .utf8) ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty || trimmed == "null" {
-        return NowPlayingSnapshot(playing: false, pid: nil, bundle: nil, parentBundle: nil)
+        return NowPlayingSnapshot(payload: [:])
     }
     guard let jsonData = trimmed.data(using: .utf8),
           let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
@@ -253,10 +247,5 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
         warn("could not parse adapter get output: \(trimmed)")
         return nil
     }
-    return NowPlayingSnapshot(
-        playing: (parsed["playing"] as? Bool) ?? false,
-        pid: (parsed["processIdentifier"] as? Int).map { NowPlayingPID(pid_t($0)) },
-        bundle: parsed["bundleIdentifier"] as? String,
-        parentBundle: parsed["parentApplicationBundleIdentifier"] as? String,
-    )
+    return NowPlayingSnapshot(payload: parsed)
 }

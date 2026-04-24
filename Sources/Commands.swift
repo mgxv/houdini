@@ -26,24 +26,14 @@ func runForeground() {
     // placeholder from before the streaming adapter delivers its first
     // event. If the one-shot fails, we skip priming — not worth
     // aborting startup over.
-    if let np = fetchNowPlayingOnce(artifacts: artifacts) {
-        controller.updateMedia(
-            playing: np.playing,
-            pid: np.pid,
-            bundle: np.bundle,
-            parentBundle: np.parentBundle,
-        )
+    if let snapshot = fetchNowPlayingOnce(artifacts: artifacts) {
+        controller.updateMedia(snapshot)
     }
 
     let adapter = AdapterClient(
         artifacts: artifacts,
-        onUpdate: { @MainActor playing, pid, bundle, parentBundle in
-            controller.updateMedia(
-                playing: playing,
-                pid: pid,
-                bundle: bundle,
-                parentBundle: parentBundle,
-            )
+        onUpdate: { @MainActor snapshot in
+            controller.updateMedia(snapshot)
         },
     )
 

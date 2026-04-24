@@ -100,21 +100,13 @@ final class Controller: NSObject {
         evaluate()
     }
 
-    /// Called by AdapterClient whenever the Now Playing state changes.
-    /// `pid` is nil when Now Playing has no current source.
-    /// `parentBundle` is the `parentApplicationBundleIdentifier` from
-    /// the event — nil for most apps, set for helper processes that
-    /// delegate to a user-facing parent (e.g. WebKit.GPU → Safari).
-    func updateMedia(
-        playing: Bool,
-        pid: NowPlayingPID?,
-        bundle: String?,
-        parentBundle: String?,
-    ) {
-        isPlaying = playing
-        nowPlayingPID = pid
-        nowPlayingBundle = bundle
-        nowPlayingParentBundle = parentBundle
+    /// Called by AdapterClient whenever the Now Playing state changes,
+    /// and once at startup from the priming `fetchNowPlayingOnce` call.
+    func updateMedia(_ snapshot: NowPlayingSnapshot) {
+        isPlaying = snapshot.playing
+        nowPlayingPID = snapshot.pid
+        nowPlayingBundle = snapshot.bundle
+        nowPlayingParentBundle = snapshot.parentBundle
         evaluate()
     }
 
