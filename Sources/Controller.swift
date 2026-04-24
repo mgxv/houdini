@@ -140,22 +140,27 @@ final class Controller: NSObject {
         )
     }
 
-    /// Two-line log format: a scannable headline plus a flat, peer-
-    /// keyed detail line. Indent on line two aligns with the frontmost
-    /// name on line one, so the event reads as one visual block in
-    /// `houdini logs controller`. The np sub-block (`npPID` / `np` /
-    /// `resp` / `parent`) is omitted entirely when nothing owns Now
-    /// Playing — `resp=-` and `parent=-` are noise without an npPID to
-    /// resolve.
+    /// Two-slot structured headline plus a flat, peer-keyed detail
+    /// line. Leading `\n` puts the unified-log prefix on its own line;
+    /// trailing `\n` adds a blank line between events. Each slot
+    /// attributes its state words to the correct subject —
+    /// `fullscreen`/`windowed` to the frontmost app, `playing`/`paused`
+    /// to the Now Playing source, which may be a different app.
     private func logSnapshot(_ snap: Snapshot) {
         let label = snap.shouldHide ? "HIDE" : "SHOW"
-        let fullScreenWord = snap.fullScreen ? "fullscreen" : "windowed"
-        let playingWord = snap.isPlaying ? "playing" : "paused"
-        let headline = "\(label)  \(snap.frontName)  [\(fullScreenWord), \(playingWord)]"
+        let fsWord = snap.fullScreen ? "fullscreen" : "windowed"
+        let front = "front=\(snap.frontName)[\(fsWord)]"
 
         let frontPIDStr = snap.frontPID?.description ?? "-"
+        let np: String
         let details: String
         if let nowPlayingPID = snap.nowPlayingPID {
+            let playWord = snap.isPlaying ? "playing" : "paused"
+            let npName = snap.nowPlayingParentBundle.flatMap { $0.isEmpty ? nil : $0 }
+                ?? nowPlayingBundle
+                ?? "pid\(nowPlayingPID)"
+            np = "np=\(npName)[\(playWord)]"
+
             let respStr = nowPlayingPID.responsiblePID.map(String.init) ?? "-"
             let parentStr = snap.nowPlayingParentBundle ?? "-"
             let npBundle = nowPlayingBundle ?? "-"
@@ -165,10 +170,11 @@ final class Controller: NSObject {
                 + "  resp=\(respStr)"
                 + "  parent=\(parentStr)"
         } else {
+            np = "np=-"
             details = "frontPID=\(frontPIDStr)  (no Now Playing source)"
         }
 
-        let message = "\(headline)\n      \(details)"
+        let message = "\n\(label)  \(front)  \(np)\n\(details)\n"
         Log.controller.info("\(message, privacy: .public)")
     }
 }
