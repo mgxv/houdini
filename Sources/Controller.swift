@@ -174,7 +174,7 @@ final class Controller: NSObject {
             details = "frontPID=\(frontPIDStr)  (no Now Playing source)"
         }
 
-        let message = "\n\(label)  \(front)  \(np)\n\(details)\n"
+        let message = "\n\(label)  \(front)  \(np)\n\(details)\n\n"
         Log.controller.info("\(message, privacy: .public)")
     }
 }
