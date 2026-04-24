@@ -22,10 +22,10 @@ func runForeground() {
 
     // Seed the controller with a one-shot Now Playing snapshot before
     // starting it, so the first logged evaluation reflects the real
-    // current state rather than "playing=false nowPlaying=-" from
-    // before the streaming adapter has delivered its first event.
-    // If the one-shot fails, we skip priming and the initial line just
-    // shows empty Now Playing state — not worth aborting startup over.
+    // current state rather than a blank "(no Now Playing source)"
+    // placeholder from before the streaming adapter delivers its first
+    // event. If the one-shot fails, we skip priming — not worth
+    // aborting startup over.
     if let np = fetchNowPlayingOnce(artifacts: artifacts) {
         controller.updateMedia(
             playing: np.playing,

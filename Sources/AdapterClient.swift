@@ -171,8 +171,7 @@ actor AdapterClient {
 }
 
 /// The fields we extract from an adapter `data` event. Missing or
-/// wrong-typed fields fall back to safe defaults, matching the
-/// behavior of the original dict-based extraction.
+/// wrong-typed fields fall back to safe defaults (`false` / `nil`).
 private struct AdapterEvent {
     let playing: Bool
     let pid: NowPlayingPID?
@@ -215,8 +214,8 @@ struct NowPlayingSnapshot {
 /// not the `{type, payload}` envelope that `stream` uses.
 ///
 /// Returns nil on spawn or parse failure (a `warn()` is emitted first).
-/// Returns `NowPlayingSnapshot(playing: false, pid: nil, bundle: nil)`
-/// when no app currently owns Now Playing.
+/// Returns a snapshot with all-nil fields when no app currently owns
+/// Now Playing.
 @MainActor
 func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let process = Process()
@@ -232,9 +231,10 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
         warn("failed to launch mediaremote-adapter: \(error)")
         return nil
     }
-    // Read before waiting: `get` output can exceed the pipe buffer
-    // when it includes artworkData. readDataToEndOfFile blocks until
-    // the adapter closes stdout at exit.
+    // Drain stdout before waiting: `readDataToEndOfFile` blocks until
+    // the adapter closes stdout at exit. The inverse order
+    // (`waitUntilExit` first) would risk the adapter blocking on a
+    // full pipe buffer.
     let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {

@@ -70,8 +70,8 @@ func focusedWindow(of pid: pid_t?) -> AXUIElement? {
         noteAXError(status)
         return nil
     }
-    // AXUIElementCopyAttributeValue returns a CoreFoundation type and
-    // the compiler guarantees this downcast always succeeds for CF types.
+    // `kAXFocusedWindowAttribute` is documented to return an
+    // AXUIElementRef, so this CF→Swift bridge is always valid.
     return (w as! AXUIElement)
 }
 
