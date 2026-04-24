@@ -17,12 +17,23 @@ struct LineBuffer {
         data.count
     }
 
+    /// Scans the buffer once, emitting each complete line to `handler`,
+    /// and drops the consumed prefix with a single `removeSubrange` at
+    /// the end. Keeps total cost O(N) in the buffer size, instead of
+    /// O(k·N) for a per-line remove loop.
     mutating func ingest(_ chunk: Data, handler: (Data) -> Void) {
         data.append(chunk)
-        while let nl = data.firstIndex(of: 0x0A) {
-            let line = data.subdata(in: 0 ..< nl)
-            data.removeSubrange(0 ... nl)
-            handler(line)
+        var lineStart = data.startIndex
+        var i = data.startIndex
+        while i < data.endIndex {
+            if data[i] == 0x0A {
+                handler(data.subdata(in: lineStart ..< i))
+                lineStart = data.index(after: i)
+            }
+            i = data.index(after: i)
+        }
+        if lineStart > data.startIndex {
+            data.removeSubrange(data.startIndex ..< lineStart)
         }
     }
 }

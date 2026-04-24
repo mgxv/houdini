@@ -61,8 +61,9 @@ extension FrontmostPID {
         // The user-facing app each side acts on behalf of, per the
         // kernel's responsibility mapping. Returns 0 for processes the
         // system doesn't track, or the PID itself when the process is
-        // not delegating for anyone.
-        let frontmostResponsiblePID = responsibleProcess(for: rawValue)
+        // not delegating for anyone. Resolve the Now Playing side
+        // first — Path 1 is the common Safari/Chrome case and doesn't
+        // need the frontmost side's mapping.
         let nowPlayingResponsiblePID = responsibleProcess(for: other.rawValue)
         // Path 1: Now Playing is a helper that delegates up to us.
         if nowPlayingResponsiblePID > 0,
@@ -70,6 +71,7 @@ extension FrontmostPID {
         {
             return true
         }
+        let frontmostResponsiblePID = responsibleProcess(for: rawValue)
         // Path 2: we're a helper that delegates up to the Now Playing app.
         if frontmostResponsiblePID > 0,
            frontmostResponsiblePID == other.rawValue

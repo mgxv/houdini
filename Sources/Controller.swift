@@ -56,6 +56,7 @@ final class Controller: NSObject {
         let fullScreen: Bool
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
+        let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
 
         var shouldHide: Bool {
@@ -146,6 +147,7 @@ final class Controller: NSObject {
             fullScreen: isFocusedWindowFullScreen(pid: frontPID?.rawValue),
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
+            nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
         )
     }
@@ -167,16 +169,16 @@ final class Controller: NSObject {
         if let nowPlayingPID = snap.nowPlayingPID {
             let playWord = snap.isPlaying ? "playing" : "paused"
             let npName = snap.nowPlayingParentBundle.flatMap { $0.isEmpty ? nil : $0 }
-                ?? nowPlayingBundle
+                ?? snap.nowPlayingBundle
                 ?? "pid\(nowPlayingPID)"
             np = "np=\(npName)[\(playWord)]"
 
             let respStr = nowPlayingPID.responsiblePID.map(String.init) ?? "-"
             let parentStr = snap.nowPlayingParentBundle ?? "-"
-            let npBundle = nowPlayingBundle ?? "-"
+            let npBundle = snap.nowPlayingBundle ?? "-"
             details = "frontPID=\(frontPIDStr)"
                 + "  npPID=\(nowPlayingPID.description)"
-                + "  np=\(npBundle)"
+                + "  npBundle=\(npBundle)"
                 + "  resp=\(respStr)"
                 + "  parent=\(parentStr)"
         } else {
