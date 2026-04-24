@@ -174,18 +174,6 @@ final class Controller: NSObject {
         let name: String
         let bundle: String?
         let fullscreen: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case pid, name, bundle, fullscreen
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encodeIfPresent(pid, forKey: .pid)
-            try container.encode(name, forKey: .name)
-            try container.encodeIfPresent(bundle, forKey: .bundle)
-            try container.encode(fullscreen, forKey: .fullscreen)
-        }
     }
 
     private struct NowPlayingPayload: Encodable {
@@ -194,19 +182,6 @@ final class Controller: NSObject {
         let parentBundle: String?
         let responsiblePID: pid_t?
         let playing: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case pid, bundle, parentBundle, responsiblePID, playing
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(pid, forKey: .pid)
-            try container.encodeIfPresent(bundle, forKey: .bundle)
-            try container.encodeIfPresent(parentBundle, forKey: .parentBundle)
-            try container.encodeIfPresent(responsiblePID, forKey: .responsiblePID)
-            try container.encode(playing, forKey: .playing)
-        }
     }
 
     private struct LogPayload: Encodable {
@@ -233,17 +208,6 @@ final class Controller: NSObject {
             } else {
                 nowPlaying = nil
             }
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case shouldHide, front, nowPlaying
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(shouldHide, forKey: .shouldHide)
-            try container.encode(front, forKey: .front)
-            try container.encodeIfPresent(nowPlaying, forKey: .nowPlaying)
         }
     }
 }
