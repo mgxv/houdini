@@ -209,5 +209,16 @@ final class Controller: NSObject {
                 nowPlaying = nil
             }
         }
+
+        enum CodingKeys: String, CodingKey {
+            case shouldHide, front, nowPlaying
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(shouldHide, forKey: .shouldHide)
+            try container.encode(front, forKey: .front)
+            try container.encodeIfPresent(nowPlaying, forKey: .nowPlaying)
+        }
     }
 }
