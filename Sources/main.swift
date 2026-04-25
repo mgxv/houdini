@@ -4,8 +4,8 @@
 // `MainActor.assumeIsolated` asserts (and to the compiler, *declares*)
 // that top-level code here runs on the main thread. SwiftPM infers this
 // automatically for `main.swift` under the Swift 6 language mode, but
-// build.sh invokes swiftc directly without that inference, so the wrap
-// is required for both build paths to compile.
+// scripts/build.sh invokes swiftc directly without that inference, so
+// the wrap is required for both build paths to compile.
 
 import Foundation
 
