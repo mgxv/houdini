@@ -103,7 +103,7 @@ func runStatus() -> Never {
     // once so the `perms:` line and the fullscreen branch agree.
     let axTrusted = isAccessibilityTrusted()
     let fullscreen: Bool? = axTrusted
-        ? isFocusedWindowFullScreen(pid: frontPID?.rawValue)
+        ? isAppFullScreen(pid: frontPID?.rawValue)
         : nil
 
     let np = fetchNowPlayingOnce(artifacts: artifacts)

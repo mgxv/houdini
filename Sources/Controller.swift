@@ -144,7 +144,7 @@ final class Controller: NSObject {
             frontPID: frontPID,
             frontName: frontName,
             frontBundle: frontBundle,
-            fullScreen: isFocusedWindowFullScreen(pid: frontPID?.rawValue),
+            fullScreen: isAppFullScreen(pid: frontPID?.rawValue),
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
             nowPlayingBundle: nowPlayingBundle,

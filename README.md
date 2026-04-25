@@ -88,7 +88,7 @@ decision: SHOW  (frontmost and Now Playing are different processes)
 
 Common reasons:
 
-- **`frontmost is not fullscreen`** — only native fullscreen (⌃⌘F) counts, not maximized windows
+- **`frontmost is not fullscreen`** — requires native fullscreen: ⌃⌘F, the green-stoplight button, or in-page fullscreen buttons (YouTube, Netflix, QuickTime). Merely-maximized windows that just fill the screen don't qualify.
 - **`nothing is using Now Playing`** — some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget
 - **`the Now Playing source is paused`** — play/pause state comes directly from the media app
 - **`frontmost and Now Playing are different processes`** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app

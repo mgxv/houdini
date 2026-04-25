@@ -7,9 +7,27 @@
 // `axTrustedCheckOptionPromptKey` in AXPromptKey.swift — keeping the
 // suppression scoped to that one file so any future
 // @preconcurrency-covered addition is grep-visible.
+//
+// Window enumeration uses two complementary lists. `kAXWindowsAttribute`
+// returns every window an app owns, including windows in other spaces;
+// `CGWindowListCopyWindowInfo(.optionOnScreenOnly, …)` returns only the
+// windows currently visible on the active space. Bridging an AXUIElement
+// back to its CGWindowID — required to intersect the two — uses the
+// private `_AXUIElementGetWindow` declared below.
 
 import ApplicationServices
 import Foundation
+
+/// Bridges an AX window element to its CGWindowID. Not in any public
+/// SDK header, but exported by HIServices and stable since at least
+/// 10.10; widely used by window-management tools. The `@_silgen_name`
+/// binds this Swift wrapper to the C symbol, so we can pick any
+/// readable Swift name without affecting the link.
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(
+    _ element: AXUIElement,
+    _ windowID: UnsafeMutablePointer<CGWindowID>,
+) -> AXError
 
 /// Prompts the user to grant Accessibility permission if not already
 /// granted. Exits on failure — nothing else works without it.
@@ -75,8 +93,16 @@ func focusedWindow(of pid: pid_t?) -> AXUIElement? {
     return (w as! AXUIElement)
 }
 
-/// Watches the frontmost process for focus/resize/move events, which
-/// is how native fullscreen toggles surface cross-process.
+/// Watches the frontmost process for focus/resize/move events and for
+/// window create/destroy. Native ⌃⌘F fullscreen toggles surface as
+/// resize/move on the existing focused window; browser HTML5 fullscreen
+/// (YouTube, Netflix, …) instead creates a *new* fullscreen window,
+/// which only `kAXWindowCreatedNotification` reliably catches. The
+/// matching `kAXUIElementDestroyedNotification` closes the symmetric
+/// case on exit, when a fullscreen window is torn down without focus
+/// shifting first. The latter is documented as element-specific but in
+/// practice fires for descendants when subscribed on the application
+/// element — relied on by Hammerspoon and similar AX-driven tooling.
 @MainActor
 final class AXWatcher {
     private var observer: AXObserver?
@@ -88,8 +114,11 @@ final class AXWatcher {
         self.onChange = onChange
     }
 
-    /// Subscribe to focus/resize/move events for the given process.
-    /// Passing nil (or any invalid PID) detaches instead.
+    /// Subscribe the AX observer to the wake-up notifications described
+    /// in the class doc above — focused-window/main-window/window-created/
+    /// ui-element-destroyed on the application element, plus resize/move
+    /// on whatever window is currently focused. Passing nil (or any
+    /// invalid PID) detaches instead.
     func attach(pid: pid_t?) {
         guard let pid, pid > 0 else { detach(); return }
         guard pid != attachedPID else { return }
@@ -104,6 +133,12 @@ final class AXWatcher {
                                   refcon)
         AXObserverAddNotification(obs, appElement,
                                   kAXMainWindowChangedNotification as CFString,
+                                  refcon)
+        AXObserverAddNotification(obs, appElement,
+                                  kAXWindowCreatedNotification as CFString,
+                                  refcon)
+        AXObserverAddNotification(obs, appElement,
+                                  kAXUIElementDestroyedNotification as CFString,
                                   refcon)
         CFRunLoopAddSource(CFRunLoopGetMain(),
                            AXObserverGetRunLoopSource(obs),
@@ -148,8 +183,14 @@ final class AXWatcher {
         return newObs
     }
 
-    /// Native fullscreen toggles surface as resize/move on the focused
-    /// window, so re-subscribe every time focus changes.
+    /// Subscribe resize/move on the currently focused window, re-run
+    /// on every focus change so we keep watching whatever window the
+    /// user is interacting with. These are wake-up sources for
+    /// `evaluate()` — they fire during a ⌃⌘F transition on the focused
+    /// window, and during an HTML5-fullscreen animation once focus
+    /// shifts to the newly created fullscreen window. The hide/show
+    /// signal itself is computed in `isAppFullScreen`, which walks
+    /// every on-screen window the app owns.
     private func refreshWindowSubscription() {
         guard let obs = observer, attachedPID > 0 else { return }
         let refcon = Unmanaged.passUnretained(self).toOpaque()
@@ -167,20 +208,84 @@ final class AXWatcher {
     }
 }
 
-/// Whether the focused window of the given process is in native
-/// fullscreen. Reads the undocumented but stable `AXFullScreen`
-/// attribute. Returns false for nil/invalid PIDs, apps with no focused
-/// window, or when the attribute isn't available.
+/// Whether the given app currently presents a fullscreen window on the
+/// active space. Walks every window the app owns (`kAXWindowsAttribute`),
+/// keeps only those that appear in the on-screen window list (which
+/// excludes windows in other spaces — see `onScreenWindowIDs` below),
+/// and returns true if any of them reports `AXFullScreen=true`.
+///
+/// Replaces an earlier "is the *focused* window fullscreen?" check that
+/// broke for browsers' HTML5 fullscreen: clicking a YouTube/Netflix
+/// fullscreen button creates a separate fullscreen window alongside the
+/// original tab window, and the AX-focused pointer oscillates between
+/// the two even though the on-screen state is stable. Walking the right
+/// set asks the right question and gives a stable answer.
+///
+/// Returns false for nil/invalid PIDs, when AX is disabled, or when the
+/// app has no on-screen windows.
 @MainActor
-func isFocusedWindowFullScreen(pid: pid_t?) -> Bool {
-    guard let window = focusedWindow(of: pid) else { return false }
-    var ref: AnyObject?
+func isAppFullScreen(pid: pid_t?) -> Bool {
+    guard let pid, pid > 0 else { return false }
+    let app = AXUIElementCreateApplication(pid)
+
+    var windowsRef: AnyObject?
     let status = AXUIElementCopyAttributeValue(
-        window, "AXFullScreen" as CFString, &ref,
+        app, kAXWindowsAttribute as CFString, &windowsRef,
     )
-    guard status == .success, let value = ref as? Bool else {
+    guard status == .success, let windows = windowsRef as? [AXUIElement] else {
         noteAXError(status)
         return false
     }
-    return value
+
+    let onScreen = onScreenWindowIDs(pid: pid)
+    if onScreen.isEmpty { return false }
+
+    for window in windows {
+        var cgID: CGWindowID = 0
+        guard _AXUIElementGetWindow(window, &cgID) == .success,
+              onScreen.contains(cgID)
+        else {
+            continue
+        }
+
+        var fsRef: AnyObject?
+        let fsStatus = AXUIElementCopyAttributeValue(
+            window, "AXFullScreen" as CFString, &fsRef,
+        )
+        if fsStatus == .success, (fsRef as? Bool) == true {
+            return true
+        }
+        // Per-window failures here are normally `.attributeUnsupported`
+        // for windows that don't expose AXFullScreen — harmless. Any
+        // `.apiDisabled` would have surfaced on the kAXWindowsAttribute
+        // read above, so we don't re-report it per-window.
+    }
+    return false
+}
+
+/// CGWindowIDs of `pid`'s windows currently visible on the active space.
+/// `kCGWindowListOptionOnScreenOnly` is the whole point of this filter:
+/// a fullscreen window in another space is *not* on-screen now, so it's
+/// excluded — which is what prevents a fullscreen Safari in space B
+/// from triggering hide while the user is using a windowed Safari in
+/// space A.
+@MainActor
+private func onScreenWindowIDs(pid: pid_t) -> Set<CGWindowID> {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let infos = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+        as? [[String: Any]]
+    else {
+        return []
+    }
+    var result = Set<CGWindowID>()
+    for info in infos {
+        guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
+              ownerPID == pid,
+              let number = info[kCGWindowNumber as String] as? CGWindowID
+        else {
+            continue
+        }
+        result.insert(number)
+    }
+    return result
 }
