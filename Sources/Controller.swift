@@ -152,11 +152,14 @@ final class Controller: NSObject {
         )
     }
 
-    /// JSON-encoded snapshot, pretty-printed via `JSONEncoder`. Field
-    /// order is the property-declaration order of the payload structs
-    /// below (CodingKeys are synthesized in the same order). Leading
-    /// `\n` puts the JSON body on its own line under the unified-log
-    /// prefix; trailing `\n` adds a blank line between events.
+    /// JSON-encoded snapshot, pretty-printed via `JSONEncoder`. Each
+    /// payload defines an explicit `encode(to:)` so field order is
+    /// stable (`shouldHide` first) and every field is always emitted —
+    /// nil optionals appear as JSON `null` rather than being elided —
+    /// so a log line shows the full state of every input the decision
+    /// considered. Leading `\n` puts the JSON body on its own line
+    /// under the unified-log prefix; trailing `\n` adds a blank line
+    /// between events.
     private func logSnapshot(_ snap: Snapshot) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
@@ -174,20 +177,56 @@ final class Controller: NSObject {
         let name: String
         let bundle: String?
         let fullscreen: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case pid, name, bundle, fullscreen
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(pid, forKey: .pid)
+            try c.encode(name, forKey: .name)
+            try c.encode(bundle, forKey: .bundle)
+            try c.encode(fullscreen, forKey: .fullscreen)
+        }
     }
 
     private struct NowPlayingPayload: Encodable {
-        let pid: pid_t
+        let pid: pid_t?
         let bundle: String?
         let parentBundle: String?
         let responsiblePID: pid_t?
         let playing: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case pid, bundle, parentBundle, responsiblePID, playing
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(pid, forKey: .pid)
+            try c.encode(bundle, forKey: .bundle)
+            try c.encode(parentBundle, forKey: .parentBundle)
+            try c.encode(responsiblePID, forKey: .responsiblePID)
+            try c.encode(playing, forKey: .playing)
+        }
     }
 
     private struct LogPayload: Encodable {
         let shouldHide: Bool
         let front: FrontPayload
-        let nowPlaying: NowPlayingPayload?
+        let nowPlaying: NowPlayingPayload
+
+        enum CodingKeys: String, CodingKey {
+            case shouldHide, front, nowPlaying
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(shouldHide, forKey: .shouldHide)
+            try c.encode(front, forKey: .front)
+            try c.encode(nowPlaying, forKey: .nowPlaying)
+        }
 
         init(_ snap: Snapshot) {
             shouldHide = snap.shouldHide
@@ -197,17 +236,13 @@ final class Controller: NSObject {
                 bundle: snap.frontBundle,
                 fullscreen: snap.fullScreen,
             )
-            if let npPID = snap.nowPlayingPID {
-                nowPlaying = NowPlayingPayload(
-                    pid: npPID.rawValue,
-                    bundle: snap.nowPlayingBundle,
-                    parentBundle: snap.nowPlayingParentBundle,
-                    responsiblePID: npPID.responsiblePID,
-                    playing: snap.isPlaying,
-                )
-            } else {
-                nowPlaying = nil
-            }
+            nowPlaying = NowPlayingPayload(
+                pid: snap.nowPlayingPID?.rawValue,
+                bundle: snap.nowPlayingBundle,
+                parentBundle: snap.nowPlayingParentBundle,
+                responsiblePID: snap.nowPlayingPID?.responsiblePID,
+                playing: snap.isPlaying,
+            )
         }
     }
 }
