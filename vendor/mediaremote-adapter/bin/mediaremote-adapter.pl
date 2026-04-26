@@ -205,9 +205,6 @@ elsif ($function_name eq "stream") {
     elsif ($key eq "human-readable" || $key eq "h") {
       set_env_option($options, "human-readable");
     }
-    elsif ($key eq "experimental-peculiar-debounce:com.tidal.desktop") {
-      set_env_option_value($options, $key);
-    }
     else {
       fail "Unrecognized option '$key'";
     }

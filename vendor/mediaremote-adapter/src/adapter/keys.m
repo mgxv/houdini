@@ -57,7 +57,7 @@ NSString *kMRARadioStationHash = @"radioStationHash";
 NSString *kMRAMediaType = @"mediaType";
 
 NSArray<NSString *> *mandatoryPayloadKeys(void) {
-    return @[ kMRAProcessIdentifier, kMRATitle, kMRAPlaying ];
+    return @[ kMRAProcessIdentifier, kMRAPlaying ];
 }
 
 bool allMandatoryPayloadKeysSet(NSDictionary *data) {
