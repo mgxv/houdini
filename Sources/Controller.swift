@@ -5,10 +5,8 @@
 import Cocoa
 
 /// Hide the menu bar iff the frontmost app is fullscreen *and* is
-/// itself the source of the current Now Playing track. This is the
-/// single source of truth for the decision — both the daemon's
-/// evaluation loop and the `status` subcommand call it, so they can't
-/// drift apart.
+/// itself the source of the current Now Playing track. Called once
+/// per evaluation tick via `Snapshot.shouldHide`.
 ///
 /// Two identity checks run in parallel for the "same app" test:
 ///   1. Responsibility-PID mapping via the kernel syscall
@@ -49,6 +47,10 @@ final class Controller: NSObject {
     /// `frontPID` and `nowPlayingPID` are distinct types (not just
     /// distinct values) so the compiler blocks accidentally swapping
     /// them.
+    ///
+    /// `nowPlayingPlaybackRate` and `nowPlayingMediaType` are
+    /// diagnostic-only — they're carried in the snapshot so the log
+    /// can surface them, and don't feed `shouldHide`.
     private struct Snapshot: Equatable {
         let frontPID: FrontmostPID?
         let frontName: String
@@ -58,6 +60,8 @@ final class Controller: NSObject {
         let nowPlayingPID: NowPlayingPID?
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
+        let nowPlayingPlaybackRate: Double?
+        let nowPlayingMediaType: String?
 
         var shouldHide: Bool {
             shouldHideMenuBar(
@@ -76,6 +80,8 @@ final class Controller: NSObject {
     private var nowPlayingPID: NowPlayingPID?
     private var nowPlayingBundle: String?
     private var nowPlayingParentBundle: String?
+    private var nowPlayingPlaybackRate: Double?
+    private var nowPlayingMediaType: String?
     private var lastSnapshot: Snapshot?
 
     private lazy var axWatcher = AXWatcher { [weak self] in
@@ -118,6 +124,8 @@ final class Controller: NSObject {
         nowPlayingPID = snapshot.pid
         nowPlayingBundle = snapshot.bundle
         nowPlayingParentBundle = snapshot.parentBundle
+        nowPlayingPlaybackRate = snapshot.playbackRate
+        nowPlayingMediaType = snapshot.mediaType
         evaluate()
     }
 
@@ -149,6 +157,8 @@ final class Controller: NSObject {
             nowPlayingPID: nowPlayingPID,
             nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
+            nowPlayingPlaybackRate: nowPlayingPlaybackRate,
+            nowPlayingMediaType: nowPlayingMediaType,
         )
     }
 
@@ -157,7 +167,7 @@ final class Controller: NSObject {
     /// Format:
     ///
     ///   {HIDE|SHOW}  front=<head>[pid=<pid>,name=<name>,bundle=<bundle>,fs=<yes|no>]
-    ///   np=<head>[pid=<pid>,bundle=<bundle>,parent=<parent>,resp=<resp>,play=<yes|no>]
+    ///   np=<head>[pid=<pid>,bundle=<bundle>,parent=<parent>,resp=<resp>,play=<yes|no>,rate=<rate>,type=<type>]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
     /// `WebKit.GPU`) — a cheap visual anchor for scanning. Empty when
@@ -167,9 +177,16 @@ final class Controller: NSObject {
     /// are double-quoted so a downstream space-tokenizing parser sees
     /// them as one field.
     ///
+    /// `rate` is `playbackRate` as the raw Double (`0.0` paused, `1.0`
+    /// normal, fractional for variable-speed playback); `null` when
+    /// the source didn't report it. `type` is `mediaType` with the
+    /// `kMRMediaRemoteNowPlayingInfoType` prefix stripped and the tail
+    /// lowercased (`audio`, `video`, `none`); `null` when the source
+    /// didn't set it — most non-audio apps don't.
+    ///
     /// Example:
     ///   HIDE  front=Safari[pid=37860,name="Safari",bundle=com.apple.Safari,fs=yes]
-    ///   np=WebKit.GPU[pid=37865,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=37860,play=yes]
+    ///   np=WebKit.GPU[pid=37865,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=37860,play=yes,rate=1.0,type=null]
     ///
     /// Leading `\n` pushes the body onto its own row under the
     /// unified-log timestamp/category prefix.
@@ -205,8 +222,16 @@ final class Controller: NSObject {
             "parent=\(formatNullableString(snap.nowPlayingParentBundle))",
             "resp=\(formatNullable(snap.nowPlayingPID?.responsiblePID))",
             "play=\(snap.isPlaying ? "yes" : "no")",
+            "rate=\(formatRate(snap.nowPlayingPlaybackRate))",
+            "type=\(formatNullableString(snap.nowPlayingMediaType))",
         ]
         return "\(head)[\(fields.joined(separator: ","))]"
+    }
+
+    /// `playbackRate` for the log: nil → `null`, otherwise the raw
+    /// Double's default stringification (`0.0`, `1.0`, `1.5`, …).
+    private static func formatRate(_ rate: Double?) -> String {
+        rate.map { "\($0)" } ?? "null"
     }
 
     /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →

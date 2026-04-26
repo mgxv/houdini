@@ -107,7 +107,7 @@ Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscre
 
 ```
 HIDE  front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,fs=yes]
-np=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes]
+np=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,rate=1.0,type=null]
 ```
 
 Hide requires all of: `fs=yes`, `play=yes`, and frontmost/Now-Playing resolving to the same app. Common reasons a SHOW is logged when you expected HIDE:
@@ -115,6 +115,8 @@ Hide requires all of: `fs=yes`, `play=yes`, and frontmost/Now-Playing resolving 
 - **`fs=no`** — requires native fullscreen: ⌃⌘F, the green-stoplight button, or in-page fullscreen buttons (YouTube, Netflix, QuickTime). Merely-maximized windows that just fill the screen don't qualify.
 - **`np=...[pid=null,...]`** — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget.
 - **`play=no`** — the Now Playing source is paused; play/pause state comes directly from the media app.
+- **`rate=...`** — `playbackRate` from MediaRemote, raw value (`0.0` paused, `1.0` normal, fractional for variable-speed playback). `null` when the source didn't report it. Diagnostic only — `play=yes/no` is what drives the decision, but a `play=no, rate=1.0` mismatch is a clean signal that you've caught a multi-callback transient inside MediaRemote.
+- **`type=...`** — `mediaType` from MediaRemote (`audio`, `video`, `none`). `null` when the source didn't set it; only audio-aware apps (Spotify, Music, Podcasts) tend to populate it. Diagnostic only.
 - **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
 
 ### Is it actually running?
