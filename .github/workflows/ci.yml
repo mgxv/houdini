@@ -5,11 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# Cancel in-progress runs on the same branch when a new push lands —
-# saves runner minutes and gets faster feedback on the latest commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   lint:
