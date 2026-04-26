@@ -1,3 +1,11 @@
+```
+  _                           _   _           _
+ | |__     ___    _   _    __| | (_)  _ __   (_)
+ | '_ \   / _ \  | | | |  / _` | | | | '_ \  | |
+ | | | | | (_) | | |_| | | (_| | | | | | | | | |
+ |_| |_|  \___/   \__,_|  \__,_| |_| |_| |_| |_|
+```
+
 # houdini
 
 A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. When you switch apps, exit fullscreen, or pause, the menu bar returns. No UI, no hotkeys.
