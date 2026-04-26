@@ -165,10 +165,9 @@ brew services start houdini
 ## Project layout
 
 ```
-scripts/              # Build, release, and vendor-sync scripts
+scripts/              # Build and release scripts
   build.sh            # Builds the framework + Swift binary (canonical path)
   release.sh          # Version bump → tag → formula update → tap mirror
-  sync.sh             # Refreshes vendor/ from the latest mediaremote-adapter release
 Formula/houdini.rb    # Homebrew formula
 Package.swift         # Optional SwiftPM manifest (for IDE indexing)
 Sources/              # Swift daemon + CLI (Swift 6, strict concurrency)
