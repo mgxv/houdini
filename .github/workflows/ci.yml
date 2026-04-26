@@ -36,7 +36,10 @@ jobs:
       - name: brew style Formula/houdini.rb
         run: brew style Formula/houdini.rb
       - name: brew audit Formula/houdini.rb
-        run: brew audit --strict --new ./Formula/houdini.rb
+        run: |
+          brew tap-new --no-git local/ci
+          cp Formula/houdini.rb "$(brew --repo local/ci)/Formula/houdini.rb"
+          brew audit --strict --new local/ci/houdini
 
   build:
     name: Build
