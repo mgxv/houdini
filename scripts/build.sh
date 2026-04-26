@@ -2,23 +2,13 @@
 # build.sh — compile MediaRemoteAdapter.framework from vendored Obj-C
 # sources, then the houdini Swift binary.
 #
-# Layout:
-#   Constants       — vendored paths, framework/binary names
-#   Output helpers  — color init, step/ok/info/kv/die, hsize, ERR trap
-#   Preflight       — required tools, Swift version, source tree
-#   Version         — read version from Sources/Version.swift
-#   Config report   — print what we're about to build
-#   Build           — framework (compile → lay out → sign), then binary
-#   Install         — stage to $PREFIX if set (non-dev layout)
-#   Summary         — paths + sizes + elapsed
-#
 # Usage:
-#   ./scripts/build.sh                          # dev build at project root
-#   PREFIX=/some/prefix ./scripts/build.sh      # staged install layout
+#   ./scripts/build.sh                       # dev build at project root
+#   PREFIX=/some/prefix ./scripts/build.sh   # staged install layout
 #
 # Env:
-#   PREFIX  install prefix. Unset = dev build at project root.
-#           Set by the Homebrew formula to stage under the keg.
+#   PREFIX   install prefix. Unset = dev build at project root.
+#            Set by the Homebrew formula to stage under the keg.
 
 set -Eeuo pipefail
 shopt -s nullglob
@@ -36,15 +26,11 @@ FRAMEWORK_NAME="MediaRemoteAdapter"
 FRAMEWORK="${FRAMEWORK_NAME}.framework"
 BINARY="houdini"
 
-# Deployment floor. Keep in sync with the Homebrew formula's
-# `depends_on macos:` and any README claims.
-#
-# MIN_SWIFT gates the compiler that build.sh drives directly; 6.0 is
-# required because the target enables the Swift 6 language mode
-# (strict concurrency). Keep in sync with the `-swift-version 6` flag
-# passed to swiftc below. Note: Package.swift's swift-tools-version is
-# a different floor — it gates PackageDescription APIs used by the
-# manifest and doesn't have to match MIN_SWIFT.
+# Deployment floor + Swift compiler floor. MIN_MACOS matches the
+# Homebrew formula's `depends_on macos:`; MIN_SWIFT matches the
+# `-swift-version 6` flag passed to swiftc below (Swift 6 language mode
+# requires compiler ≥ 6.0). Package.swift's swift-tools-version is
+# independent — it gates manifest APIs, not the source-code floor.
 MIN_MACOS="15.0"
 MIN_SWIFT="6.0"
 HOST_ARCH="$(uname -m)"
@@ -96,8 +82,8 @@ done
 [ -d Sources ]            || die "Sources/ not found — wrong working directory?"
 [ -f Sources/main.swift ] || die "Sources/main.swift not found"
 
-# `.swift-version` (if present) pins the dev toolchain for swiftly users;
-# it's not required. The build only enforces a minimum Swift version.
+# `.swift-version` (if present) pins the dev toolchain for swiftly users
+# but isn't required — the build only enforces a minimum.
 SWIFT_VERSION_LINE="$(swiftc --version 2>/dev/null | head -1)"
 ACTUAL_SWIFT="$(printf '%s\n' "$SWIFT_VERSION_LINE" \
     | grep -oE 'Swift version [0-9]+\.[0-9]+(\.[0-9]+)?' \
@@ -113,9 +99,8 @@ ok "toolchain: swiftc, clang, codesign, perl  (Swift $ACTUAL_SWIFT ≥ $MIN_SWIF
 # ---------------------------------------------------------------------------
 
 [ -f Sources/Version.swift ] || die "Sources/Version.swift missing"
-# Parse `let version = "X.Y.Z"` — first quoted string wins. awk's
-# -F'"' splits on double quotes, so field 2 is the literal. The exit
-# after the first match keeps the script tolerant of later additions.
+# Parse `let version = "X.Y.Z"` — first quoted string wins. Same parser
+# as scripts/release.sh; keep them in sync.
 VERSION="$(awk -F'"' '/^let version *=/ {print $2; exit}' Sources/Version.swift)"
 [ -n "$VERSION" ]  || die "could not parse 'version' from Sources/Version.swift"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
@@ -158,8 +143,8 @@ SOURCES+=("$VENDOR"/src/private/*.m "$VENDOR"/src/utility/*.m)
 ok "${#SOURCES[@]} .m sources (test.m excluded)"
 
 # ---------------------------------------------------------------------------
-# Clean stale outputs at the project root. Installed outputs under
-# $PREFIX (if any) are cleaned later, just before staging.
+# Clean previous outputs (project root only — staged outputs under
+# $PREFIX are cleaned later, just before staging)
 # ---------------------------------------------------------------------------
 
 step "Cleaning previous build outputs"
@@ -242,15 +227,11 @@ if [ "$PREFIX" != "$PROJECT_ROOT" ]; then
     BIN_DIR="$PREFIX/bin"
     LIBEXEC_DIR="$PREFIX/libexec/houdini"
     mkdir -p "$BIN_DIR" "$LIBEXEC_DIR"
-    # Wipe any stale artifacts from a previous install at this prefix.
     rm -rf "$LIBEXEC_DIR/$FRAMEWORK" "$LIBEXEC_DIR/vendor" "$BIN_DIR/$BINARY"
-    # `cp -R` preserves the framework's internal Versions/Current symlinks.
-    cp -R "$FRAMEWORK" "$LIBEXEC_DIR/"
+    cp -R "$FRAMEWORK" "$LIBEXEC_DIR/"   # cp -R preserves Versions/Current symlinks
     cp -R vendor "$LIBEXEC_DIR/"
     mv "$BINARY" "$BIN_DIR/"
-    # Framework was copied, not moved — clean the staging location so the
-    # project root doesn't end up with a duplicate copy.
-    rm -rf "$FRAMEWORK"
+    rm -rf "$FRAMEWORK"                  # framework was copied, not moved
     ok "staged under $PREFIX"
 fi
 
