@@ -16,9 +16,9 @@ jobs:
     name: SwiftFormat
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - name: Install SwiftFormat
-        run: brew install swiftformat
+      - uses: actions/checkout@v5
+      - name: Install SwiftFormat (if missing)
+        run: command -v swiftformat >/dev/null || brew install swiftformat
       - name: Show versions
         run: swiftformat --version
       - name: Lint Sources/
@@ -28,7 +28,7 @@ jobs:
     name: Formula audit
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: brew style Formula/houdini.rb
         run: brew style Formula/houdini.rb
 
@@ -36,7 +36,7 @@ jobs:
     name: Build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Show toolchain
         run: |
           xcode-select -p
@@ -75,7 +75,7 @@ jobs:
             config: "-c release"
             extra: "-Xswiftc -warnings-as-errors"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Show toolchain
         run: swift --version
       - name: swift build ${{ matrix.config }} ${{ matrix.extra }}
