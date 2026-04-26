@@ -28,21 +28,21 @@ class Houdini < Formula
       Accessibility permission
       ---------------------------------------------------------------
       houdini needs Accessibility to detect whether the frontmost app
-      is in fullscreen. On first start the daemon will prompt; if you
-      miss the prompt, grant access manually:
+      is in fullscreen. `brew services start houdini` triggers the
+      prompt on a fresh install; `brew services restart houdini`
+      re-triggers it when permission is missing (after an upgrade,
+      after revocation, or if the original prompt was dismissed).
+      The restart form works in both cases, so when in doubt, use it.
 
-        1. Open System Settings → Privacy & Security → Accessibility
-        2. Grant access to:
-             #{opt_bin}/houdini
-        3. Restart the service:
+        Grant Accessibility permission to houdini:
              brew services restart houdini
 
       After upgrading
       ---------------------------------------------------------------
       `brew upgrade houdini` installs a freshly-signed binary, which
       macOS treats as a new identity for Accessibility — the existing
-      grant no longer applies. Repeat the steps above after every
-      upgrade.
+      grant no longer applies. Run `brew services restart houdini` to
+      re-trigger the prompt and re-grant.
 
       How it works
       ---------------------------------------------------------------
@@ -54,7 +54,7 @@ class Houdini < Formula
 
       When those match and the app is actively playing, the menu bar
       hides. Switching apps, exiting fullscreen, or pausing brings it
-      back. In practice: fullscreen YouTube, Netflix, QuickTime, and
+      back. In practice: fullscreen YouTube, Netflix, Apple TV+, and
       Spotify will hide the bar. Fullscreen Terminal won't.
 
       Limitations

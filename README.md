@@ -1,8 +1,23 @@
 # houdini
 
-A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the one currently playing in the system **Now Playing** widget.
+A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. When you switch apps, exit fullscreen, or pause, the menu bar returns. No UI, no hotkeys.
 
-Watching a video in fullscreen? The menu bar disappears. Switch windows, pause, or focus a non-media app? It comes back. No UI, no hotkeys.
+## How it works
+
+houdini hides the menu bar only when **all three** are true:
+
+1. An app is in native fullscreen
+2. That app is the frontmost (focused) app
+3. That same app is actively playing media via Now Playing
+
+When any one becomes false, the menu bar comes back.
+
+**Hardware note.** Houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2024+).
+
+- **Notched:** the menu-bar slot is permanently reserved for the notch, so toggling the fullscreen menu-bar preference doesn't change the window's content area — show/hide is purely visual.
+- **Non-notched:** the fullscreen window resizes by the menu-bar height each time, which reflows in-window content (e.g. a web page in Chrome shifts up or down by the menu-bar height).
+
+Functionally identical; only visually different.
 
 ## Install
 
@@ -21,17 +36,12 @@ Then start the service:
 brew services start houdini
 ```
 
-On first start you'll be prompted to grant Accessibility permission. After granting, run `brew services restart houdini` once to pick it up.
+houdini needs Accessibility to detect whether the frontmost app is in fullscreen.
 
-## How it works
+- `brew services start houdini` — triggers the prompt on a fresh install
+- `brew services restart houdini` — re-triggers it when permission is missing (after an upgrade, after revocation, or if the original prompt was dismissed)
 
-houdini hides the menu bar only when **all three** are true:
-
-1. An app is in native fullscreen
-2. That app is the frontmost (focused) app
-3. That same app is actively playing media via Now Playing
-
-When any one becomes false, the menu bar comes back.
+The restart form works in both cases, so when in doubt, use it.
 
 ## Usage
 
@@ -42,11 +52,9 @@ brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 ```
 
-Logs go to the macOS unified log under subsystem `com.github.mgxv.houdini`. Stream them with `houdini logs` or view in Console.app.
-
 Running the binary directly `houdini` is useful for debugging; `brew services` is the normal path.
 
-### Diagnostic subcommands
+## Diagnostics
 
 ```bash
 houdini status                    # print frontmost / Now-Playing state and the
@@ -63,19 +71,22 @@ houdini help                      # full usage
 
 `houdini status` is the fastest way to verify what the daemon is seeing — it reports whether a daemon is running and samples the same inputs (frontmost app, Accessibility fullscreen state, Now Playing) independently of it, so it's safe to run at any time.
 
+Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
-## Troubleshooting
+- `controller` — HIDE/SHOW snapshots (info) plus the per-window `isAppFullScreen` diagnostic (debug)
+- `adapter` — output from the mediaremote-adapter subprocess (debug)
+- `general` — startup/shutdown notices, warnings, errors (info)
 
-### Is it actually running?
+`houdini logs` streams everything across all three categories at debug level — no flags, one stream, ready to copy-paste into a bug report. The system handles retention and rotation; nothing on disk to manage.
 
 ```bash
-houdini status                     # prints `daemon: running` or `not running`
-brew services info houdini         # launchd view: Running / Loaded / PID
-pgrep -afl houdini                 # confirms the Swift daemon is alive
-pgrep -afl mediaremote-adapter     # confirms the Perl subprocess it spawns
+houdini logs                                              # live stream — everything, debug level
+log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
 ```
 
-A healthy install shows **two** processes — the `houdini` binary and the `/usr/bin/perl … mediaremote-adapter.pl stream …` child it spawns for Now-Playing events. If the Perl child dies, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
+
+## Troubleshooting
 
 ### The menu bar isn't hiding
 
@@ -95,6 +106,17 @@ Common reasons:
 - **`the Now Playing source is paused`** — play/pause state comes directly from the media app
 - **`frontmost and Now Playing are different processes`** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app
 
+### Is it actually running?
+
+```bash
+houdini status                     # prints `daemon: running` or `not running`
+brew services info houdini         # launchd view: Running / Loaded / PID
+pgrep -afl houdini                 # confirms the Swift daemon is alive
+pgrep -afl mediaremote-adapter     # confirms the Perl subprocess it spawns
+```
+
+A healthy install shows **two** processes — the `houdini` binary and the `/usr/bin/perl … mediaremote-adapter.pl stream …` child it spawns for Now-Playing events. If the Perl child dies, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+
 ### Safari fullscreen on the first video
 
 Safari sometimes won't honor an in-page fullscreen click — YouTube, Netflix, Vimeo, Twitch, Apple TV+, any site using the HTML5 `requestFullscreen()` API — as native macOS fullscreen on the first request after a fresh Safari launch with autoplaying media. ⌃⌘F can also fail in this state. **Workaround:** pause the video and resume it once, then trigger fullscreen again — every cycle for the rest of the session works normally.
@@ -109,11 +131,13 @@ If you revoke Accessibility while the daemon is running, `houdini logs` will sho
 Accessibility permission appears to have been revoked; fullscreen detection is disabled.
 ```
 
-(The same message is echoed to stderr with a `houdini:` prefix when the binary runs in a foreground terminal.) Re-grant in *System Settings → Privacy & Security → Accessibility*, then:
+(The same message is echoed to stderr with a `houdini:` prefix when the binary runs in a foreground terminal.) To recover, run:
 
 ```bash
 brew services restart houdini
 ```
+
+That re-triggers the Accessibility prompt; toggle houdini back on.
 
 ### Starting clean
 
@@ -125,24 +149,6 @@ pkill -x houdini                   # kill any foreground or orphan houdini
 pkill -f mediaremote-adapter       # kill any orphan Perl subprocesses
 brew services start houdini
 ```
-
-### Logs
-
-Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
-
-- `controller` — HIDE/SHOW snapshots (info) plus the per-window `isAppFullScreen` diagnostic (debug)
-- `adapter` — output from the mediaremote-adapter subprocess (debug)
-- `general` — startup/shutdown notices, warnings, errors (info)
-
-`houdini logs` streams everything across all three categories at debug level — no flags, one stream, ready to copy-paste into a bug report. The system handles retention and rotation; nothing on disk to manage.
-
-```bash
-houdini logs                                              # live stream — everything, debug level
-log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
-```
-
-Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
-
 
 ## Project layout
 
