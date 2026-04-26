@@ -1,33 +1,18 @@
 #!/bin/bash
 # sync.sh — refresh vendor/mediaremote-adapter/ from the latest
-# ungive/mediaremote-adapter release, then commit and push the result.
+# ungive/mediaremote-adapter release, then commit + push.
 #
 # Slim-copy semantics: every file already in vendor/mediaremote-adapter/
-# gets overwritten from its counterpart in the upstream tarball, if one
-# exists. Files missing upstream are left alone (possible if upstream
-# renames or deletes). New upstream files are NOT added — the vendored
-# shape stays curated to what scripts/build.sh actually compiles.
+# gets overwritten from its upstream counterpart if one exists. Files
+# missing upstream are left alone; new upstream files are NOT added.
+# The vendored shape stays curated to what scripts/build.sh compiles.
 #
-# Layout:
-#   Constants       — vendored path, upstream repo
-#   Output helpers  — color init, step/ok/info/note/die, run, ERR trap
-#   Preflight       — tools, vendor tree, git state
-#   Resolve tag     — follow releases/latest redirect
-#   Fetch + extract — tarball → sha-log → temp dir
-#   Slim-copy       — overwrite matching files under vendor/
-#   Commit + push   — `git add .` → commit → push main
+# Usage: ./scripts/sync.sh
 #
-# Usage:
-#   ./scripts/sync.sh
-#
-# Preconditions (enforced by preflight):
-#   - on main
-#   - clean working tree (so `git add .` only captures the sync diff)
-#   - aligned with origin/main
-#
-# On success: one commit ("sync mediaremote-adapter vX.Y.Z") pushed to
-# origin/main. If vendor/ already matches upstream, exits without
-# touching git.
+# Preconditions (enforced by preflight): on main, clean working tree,
+# aligned with origin/main. On success: one commit ("sync
+# mediaremote-adapter vX.Y.Z") pushed to origin/main. If vendor/ already
+# matches upstream, exits without touching git.
 
 set -Eeuo pipefail
 
@@ -83,9 +68,7 @@ git remote get-url origin >/dev/null 2>&1 \
     || die "no 'origin' remote configured"
 [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] \
     || die "not on main (checkout main before syncing)"
-# Refresh stat info so files with touched mtimes but unchanged contents
-# don't register as dirty. Matches the pattern in release.sh.
-git update-index --refresh >/dev/null || true
+git update-index --refresh >/dev/null || true   # avoid stale-stat false positives below
 git diff-index --quiet HEAD -- \
     || die "working tree has uncommitted changes — commit or stash first"
 git fetch --quiet origin main
@@ -94,11 +77,9 @@ git fetch --quiet origin main
 ok "on main, clean, aligned with origin"
 
 # ---------------------------------------------------------------------------
-# Resolve latest tag
-#
-# GitHub 302-redirects /releases/latest to /releases/tag/vX.Y.Z. Follow
-# the redirect, pull the final URL, take the last path component as the
-# tag. No API rate limits, no auth, no `gh` dependency.
+# Resolve latest tag — follow GitHub's /releases/latest 302 redirect to
+# /releases/tag/vX.Y.Z and take the last path component. No API rate
+# limits, no auth, no `gh` dependency.
 # ---------------------------------------------------------------------------
 
 step "Resolving latest $REPO release"
@@ -135,12 +116,9 @@ UPSTREAM="$TMPDIR/mediaremote-adapter-${TAG#v}"
 ok "extracted to $UPSTREAM"
 
 # ---------------------------------------------------------------------------
-# Slim-copy
-#
-# Walk every file already under $VENDOR/. If upstream has a counterpart
-# at the same relative path and the bytes differ, overwrite. `cp`
-# preserves mode on macOS by default, so mediaremote-adapter.pl stays
-# executable without a chmod call.
+# Slim-copy — overwrite files that exist in both trees and differ. `cp`
+# preserves mode on macOS, so mediaremote-adapter.pl stays executable
+# without a chmod call.
 # ---------------------------------------------------------------------------
 
 step "Slim-copying into $VENDOR"
@@ -164,10 +142,8 @@ fi
 ok "$updated of $total files updated"
 
 # ---------------------------------------------------------------------------
-# Commit + push
-#
-# `git add .` per the maintainer's preference. The clean-tree preflight
-# above ensures this only captures the sync diff (no stray WIP).
+# Commit + push — `git add .` is safe because the clean-tree preflight
+# above guarantees the diff is only the sync (no stray WIP).
 # ---------------------------------------------------------------------------
 
 step "Committing and pushing"

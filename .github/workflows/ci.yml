@@ -24,6 +24,14 @@ jobs:
       - name: Lint Sources/
         run: swiftformat --lint Sources/
 
+  formula:
+    name: Formula audit
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: brew style Formula/houdini.rb
+        run: brew style Formula/houdini.rb
+
   build:
     name: Build
     runs-on: macos-15
