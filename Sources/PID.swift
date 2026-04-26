@@ -114,3 +114,14 @@ extension NowPlayingPID: CustomStringConvertible {
         String(rawValue)
     }
 }
+
+/// Decode from a bare JSON number (the shape mediaremote-adapter uses
+/// for `processIdentifier`). The Int → pid_t (Int32) narrowing matches
+/// the previous dict-fishing init's behavior.
+extension NowPlayingPID: Decodable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(Int.self)
+        self.init(pid_t(raw))
+    }
+}

@@ -149,53 +149,85 @@ actor AdapterClient {
 
     private func handleStdoutLine(_ line: Data) {
         guard !line.isEmpty else { return }
-        guard let parsed = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+
+        let event: NowPlayingStreamEvent
+        do {
+            event = try Self.decoder.decode(NowPlayingStreamEvent.self, from: line)
+        } catch {
             let preview = String(data: line, encoding: .utf8) ?? "<non-utf8>"
-            Task { @MainActor in warn("ignored non-JSON line from adapter: \(preview)") }
+            Task { @MainActor in
+                warn("could not decode adapter line: \(preview) (\(error))")
+            }
             return
         }
-        guard let snapshot = NowPlayingSnapshot(streamEvent: parsed) else { return }
+
+        guard event.type == "data" else { return } // ignore heartbeats / errors
+        let snapshot = event.payload ?? .empty // null/missing payload → nothing playing
+
         let handler = onUpdate
         Task { @MainActor in handler(snapshot) }
     }
+
+    /// Shared decoder. Stateless once configured; reusing avoids
+    /// per-line allocation churn.
+    private static let decoder = JSONDecoder()
 }
 
 /// What the adapter tells us about the current Now Playing source.
-/// Shared shape for both output modes:
-///
-/// - `stream` events come wrapped in a `{type, payload}` envelope and
-///   arrive continuously while the daemon runs.
-/// - `get` emits the bare payload dict (or the literal JSON `null`
-///   when nothing is playing) and is used by the `status` subcommand.
-///
 /// `pid == nil` means no app currently owns Now Playing. `bundle` is
 /// the PID's own bundle id; `parentBundle` is MediaRemote's assertion
-/// of the logical owning app and is set for helper-process owners
-/// (e.g. `com.apple.Safari` when the pid belongs to WebKit.GPU).
-/// Missing or wrong-typed fields fall back to safe defaults
-/// (`false` / `nil`).
+/// of the logical owning app, set for helper-process owners (e.g.
+/// `com.apple.Safari` when the pid belongs to WebKit.GPU).
 struct NowPlayingSnapshot {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
     let parentBundle: String?
 
-    /// Parse from the bare payload dict that `get` mode emits.
-    init(payload: [String: Any]) {
-        playing = (payload["playing"] as? Bool) ?? false
-        pid = (payload["processIdentifier"] as? Int)
-            .map { NowPlayingPID(pid_t($0)) }
-        bundle = payload["bundleIdentifier"] as? String
-        parentBundle = payload["parentApplicationBundleIdentifier"] as? String
+    /// All-nil sentinel for "nothing is playing." Returned for
+    /// `get`-mode `null`/empty output and for `stream`-mode `data`
+    /// events whose `payload` is null or missing.
+    static let empty = NowPlayingSnapshot(
+        playing: false,
+        pid: nil,
+        bundle: nil,
+        parentBundle: nil,
+    )
+}
+
+// Decoding lives in an extension so Swift keeps the auto-synthesized
+// memberwise init for `empty` (and any future call site) instead of
+// requiring us to spell it out.
+extension NowPlayingSnapshot: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case playing
+        case pid = "processIdentifier"
+        case bundle = "bundleIdentifier"
+        case parentBundle = "parentApplicationBundleIdentifier"
     }
 
-    /// Parse from the `{type, payload}` envelope that `stream` mode
-    /// emits. Returns nil for non-`data` events so the caller can
-    /// silently ignore heartbeats, errors, etc.
-    init?(streamEvent: [String: Any]) {
-        guard (streamEvent["type"] as? String) == "data" else { return nil }
-        self.init(payload: (streamEvent["payload"] as? [String: Any]) ?? [:])
+    /// Missing keys decode to defaults (`playing` → `false`, optionals
+    /// → `nil`). A wrong-typed value still throws — schema drift in
+    /// mediaremote-adapter surfaces as a `DecodingError` rather than
+    /// silently degrading to all-nil.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            playing: c.decodeIfPresent(Bool.self, forKey: .playing) ?? false,
+            pid: c.decodeIfPresent(NowPlayingPID.self, forKey: .pid),
+            bundle: c.decodeIfPresent(String.self, forKey: .bundle),
+            parentBundle: c.decodeIfPresent(String.self, forKey: .parentBundle),
+        )
     }
+}
+
+/// `stream`-mode envelope: `{type, payload}`. We only act on `type ==
+/// "data"`; everything else (heartbeats, errors) is silently ignored.
+/// `payload` is optional so a `data` event with a missing or null
+/// payload still decodes — call sites map that to `NowPlayingSnapshot.empty`.
+struct NowPlayingStreamEvent: Decodable {
+    let type: String
+    let payload: NowPlayingSnapshot?
 }
 
 /// Synchronously invokes `mediaremote-adapter.pl get` and parses the
@@ -238,13 +270,16 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let trimmed = (String(data: data, encoding: .utf8) ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty || trimmed == "null" {
-        return NowPlayingSnapshot(payload: [:])
+        return .empty
     }
-    guard let jsonData = trimmed.data(using: .utf8),
-          let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-    else {
-        warn("could not parse adapter get output: \(trimmed)")
+    guard let jsonData = trimmed.data(using: .utf8) else {
+        warn("adapter get output not utf-8: \(trimmed)")
         return nil
     }
-    return NowPlayingSnapshot(payload: parsed)
+    do {
+        return try JSONDecoder().decode(NowPlayingSnapshot.self, from: jsonData)
+    } catch {
+        warn("could not decode adapter get output: \(trimmed) (\(error))")
+        return nil
+    }
 }
