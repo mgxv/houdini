@@ -152,97 +152,102 @@ final class Controller: NSObject {
         )
     }
 
-    /// JSON-encoded snapshot, pretty-printed via `JSONEncoder`. Each
-    /// payload defines an explicit `encode(to:)` so field order is
-    /// stable (`shouldHide` first) and every field is always emitted —
-    /// nil optionals appear as JSON `null` rather than being elided —
-    /// so a log line shows the full state of every input the decision
-    /// considered. Leading `\n` puts the JSON body on its own line
-    /// under the unified-log prefix; trailing `\n` adds a blank line
-    /// between events.
+    /// Renders the snapshot as two scannable lines for the unified log:
+    /// decision + frontmost on the first row, Now Playing on the second.
+    /// Format:
+    ///
+    ///   {HIDE|SHOW}  front=<head>[pid=<pid>,name=<name>,bundle=<bundle>,fs=<yes|no>]
+    ///   np=<head>[pid=<pid>,bundle=<bundle>,parent=<parent>,resp=<resp>,play=<yes|no>]
+    ///
+    /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
+    /// `WebKit.GPU`) — a cheap visual anchor for scanning. Empty when
+    /// the bundle is nil. The bracketed body emits every original field;
+    /// missing optionals are explicit `null` (so absent vs. empty stays
+    /// distinguishable from the log alone). String values with spaces
+    /// are double-quoted so a downstream space-tokenizing parser sees
+    /// them as one field.
+    ///
+    /// Example:
+    ///   HIDE  front=Safari[pid=37860,name="Safari",bundle=com.apple.Safari,fs=yes]
+    ///   np=WebKit.GPU[pid=37865,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=37860,play=yes]
+    ///
+    /// Leading `\n` pushes the body onto its own row under the
+    /// unified-log timestamp/category prefix.
     private func logSnapshot(_ snap: Snapshot) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(LogPayload(snap)),
-              let json = String(data: data, encoding: .utf8)
-        else {
-            Log.controller.error("failed to encode snapshot for logging")
-            return
-        }
-        Log.controller.info("\n\(json, privacy: .public)\n")
+        Log.controller.info("\n\(Self.formatSnapshot(snap), privacy: .public)")
     }
 
-    private struct FrontPayload: Encodable {
-        let pid: pid_t?
-        let name: String
-        let bundle: String?
-        let fullscreen: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case pid, name, bundle, fullscreen
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(pid, forKey: .pid)
-            try c.encode(name, forKey: .name)
-            try c.encode(bundle, forKey: .bundle)
-            try c.encode(fullscreen, forKey: .fullscreen)
-        }
+    private static func formatSnapshot(_ snap: Snapshot) -> String {
+        let decision = snap.shouldHide ? "HIDE" : "SHOW"
+        // Decision + front on one line, np on the next. Long lines (full
+        // bundles, parent, resp) made the single-line form wrap on most
+        // terminals; splitting keeps each half readable without dropping
+        // any fields.
+        return "\(decision)  front=\(formatFront(snap))\nnp=\(formatNowPlaying(snap))"
     }
 
-    private struct NowPlayingPayload: Encodable {
-        let pid: pid_t?
-        let bundle: String?
-        let parentBundle: String?
-        let responsiblePID: pid_t?
-        let playing: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case pid, bundle, parentBundle, responsiblePID, playing
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(pid, forKey: .pid)
-            try c.encode(bundle, forKey: .bundle)
-            try c.encode(parentBundle, forKey: .parentBundle)
-            try c.encode(responsiblePID, forKey: .responsiblePID)
-            try c.encode(playing, forKey: .playing)
-        }
+    private static func formatFront(_ snap: Snapshot) -> String {
+        let head = bundleShort(snap.frontBundle) ?? ""
+        let fields = [
+            "pid=\(formatNullable(snap.frontPID?.rawValue))",
+            "name=\(quoteString(snap.frontName))",
+            "bundle=\(formatNullableString(snap.frontBundle))",
+            "fs=\(snap.fullScreen ? "yes" : "no")",
+        ]
+        return "\(head)[\(fields.joined(separator: ","))]"
     }
 
-    private struct LogPayload: Encodable {
-        let shouldHide: Bool
-        let front: FrontPayload
-        let nowPlaying: NowPlayingPayload
+    private static func formatNowPlaying(_ snap: Snapshot) -> String {
+        let head = bundleShort(snap.nowPlayingBundle) ?? ""
+        let fields = [
+            "pid=\(formatNullable(snap.nowPlayingPID?.rawValue))",
+            "bundle=\(formatNullableString(snap.nowPlayingBundle))",
+            "parent=\(formatNullableString(snap.nowPlayingParentBundle))",
+            "resp=\(formatNullable(snap.nowPlayingPID?.responsiblePID))",
+            "play=\(snap.isPlaying ? "yes" : "no")",
+        ]
+        return "\(head)[\(fields.joined(separator: ","))]"
+    }
 
-        enum CodingKeys: String, CodingKey {
-            case shouldHide, front, nowPlaying
-        }
+    /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →
+    /// `WebKit.GPU`. Trims the reverse-DNS prefix and keeps the
+    /// app-identifying tail. Returns nil for nil/empty input so the
+    /// caller can omit the head entirely.
+    private static func bundleShort(_ bundle: String?) -> String? {
+        guard let bundle, !bundle.isEmpty else { return nil }
+        let parts = bundle.split(separator: ".")
+        return parts.count >= 3
+            ? parts.dropFirst(2).joined(separator: ".")
+            : bundle
+    }
 
-        func encode(to encoder: Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(shouldHide, forKey: .shouldHide)
-            try c.encode(front, forKey: .front)
-            try c.encode(nowPlaying, forKey: .nowPlaying)
-        }
+    /// pid_t nil → "null"; non-nil → its decimal representation.
+    /// Specialized to pid_t (the only nullable numeric we log) so
+    /// interpolation goes through Int32's direct path rather than
+    /// `String(describing:)`'s reflection-based fallback.
+    private static func formatNullable(_ value: pid_t?) -> String {
+        value.map { "\($0)" } ?? "null"
+    }
 
-        init(_ snap: Snapshot) {
-            shouldHide = snap.shouldHide
-            front = FrontPayload(
-                pid: snap.frontPID?.rawValue,
-                name: snap.frontName,
-                bundle: snap.frontBundle,
-                fullscreen: snap.fullScreen,
-            )
-            nowPlaying = NowPlayingPayload(
-                pid: snap.nowPlayingPID?.rawValue,
-                bundle: snap.nowPlayingBundle,
-                parentBundle: snap.nowPlayingParentBundle,
-                responsiblePID: snap.nowPlayingPID?.responsiblePID,
-                playing: snap.isPlaying,
-            )
-        }
+    /// Three-state string formatting: nil → `null`, empty → `""`,
+    /// value with a space → double-quoted, value without a space →
+    /// bare. Bundles (reverse-DNS) hit the bare path; localized names
+    /// like "Google Chrome" are quoted. The nil vs empty distinction
+    /// is preserved so a reader can tell "field absent" from "field
+    /// present but empty" — the underlying optionals can mean
+    /// genuinely different things (e.g. a nil parentBundle is "no
+    /// helper relationship," an empty string is "MediaRemote reported
+    /// the field as empty.").
+    private static func formatNullableString(_ value: String?) -> String {
+        guard let value else { return "null" }
+        return value.contains(" ") || value.isEmpty
+            ? "\"\(value)\""
+            : value
+    }
+
+    /// Always quote — used for `name`, which is a free-form display
+    /// string that may contain spaces, parens, or LTR markers.
+    private static func quoteString(_ value: String) -> String {
+        "\"\(value)\""
     }
 }

@@ -132,10 +132,9 @@ actor AdapterClient {
     }
 
     /// Accumulates a stderr chunk and forwards each complete line to
-    /// the unified log under the "adapter" category at `.debug` level,
-    /// so the default `houdini logs` stream stays focused on decisions
-    /// and warnings. Surface it with `houdini logs adapter` when
-    /// diagnosing the subprocess. Same fatal-on-overflow policy as stdout.
+    /// the unified log under the "adapter" category at `.debug` level.
+    /// Surfaces in `houdini logs` (which streams the whole subsystem at
+    /// debug). Same fatal-on-overflow policy as stdout.
     private func ingestStderr(_ chunk: Data) {
         stderrBuffer.ingest(chunk) { line in
             let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"

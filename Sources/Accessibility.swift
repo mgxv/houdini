@@ -221,6 +221,12 @@ final class AXWatcher {
 /// the two even though the on-screen state is stable. Walking the right
 /// set asks the right question and gives a stable answer.
 ///
+/// Walks every on-screen window rather than short-circuiting on the
+/// first fullscreen match. The extra AX queries are cheap (a few ms
+/// at most for typical window counts), and the uniform walk lets the
+/// per-window debug log capture the complete picture — useful for
+/// diagnosing flicker-prone apps. Stream it with `houdini logs`.
+///
 /// Returns false for nil/invalid PIDs, when AX is disabled, or when the
 /// app has no on-screen windows.
 @MainActor
@@ -232,19 +238,45 @@ func isAppFullScreen(pid: pid_t?) -> Bool {
     let status = AXUIElementCopyAttributeValue(
         app, kAXWindowsAttribute as CFString, &windowsRef,
     )
-    guard status == .success, let windows = windowsRef as? [AXUIElement] else {
+
+    // Two paths so each bail message names exactly which check failed,
+    // rather than reasoning post-hoc about which branch a combined
+    // `guard` fell out of. `noteAXError` only matters on the AX path —
+    // the cast path runs with `status == .success`, so calling it there
+    // would be a no-op (`noteAXError` only acts on `.apiDisabled`).
+    guard status == .success else {
         noteAXError(status)
+        Log.controller.debug(
+            "\nisAppFullScreen pid=\(pid) bailed: ax_status=\(status.rawValue)",
+        )
+        return false
+    }
+    guard let windows = windowsRef as? [AXUIElement] else {
+        Log.controller.debug(
+            "\nisAppFullScreen pid=\(pid) bailed: windowsRef cast to [AXUIElement] failed",
+        )
         return false
     }
 
     let onScreen = onScreenWindowIDs(pid: pid)
-    if onScreen.isEmpty { return false }
+    if onScreen.isEmpty {
+        Log.controller.debug(
+            "\nisAppFullScreen pid=\(pid) ax_windows=\(windows.count) onscreen=0 result=false",
+        )
+        return false
+    }
 
+    var result = false
+    var details: [String] = []
     for window in windows {
         var cgID: CGWindowID = 0
-        guard _AXUIElementGetWindow(window, &cgID) == .success,
-              onScreen.contains(cgID)
-        else {
+        let getStatus = _AXUIElementGetWindow(window, &cgID)
+        guard getStatus == .success else {
+            details.append("?:get-fail(\(getStatus.rawValue))")
+            continue
+        }
+        if !onScreen.contains(cgID) {
+            details.append("\(cgID):off")
             continue
         }
 
@@ -252,15 +284,28 @@ func isAppFullScreen(pid: pid_t?) -> Bool {
         let fsStatus = AXUIElementCopyAttributeValue(
             window, "AXFullScreen" as CFString, &fsRef,
         )
-        if fsStatus == .success, (fsRef as? Bool) == true {
-            return true
+        if fsStatus == .success, let value = fsRef as? Bool {
+            details.append("\(cgID):fs=\(value)")
+            if value { result = true }
+        } else {
+            details.append("\(cgID):fs-err(\(fsStatus.rawValue))")
         }
-        // Per-window failures here are normally `.attributeUnsupported`
-        // for windows that don't expose AXFullScreen — harmless. Any
-        // `.apiDisabled` would have surfaced on the kAXWindowsAttribute
-        // read above, so we don't re-report it per-window.
+        // Per-window AXFullScreen failures are normally
+        // `.attributeUnsupported` for windows that don't expose the
+        // attribute — harmless. Any `.apiDisabled` would have surfaced
+        // on the kAXWindowsAttribute read above, so we don't
+        // re-report it per-window.
     }
-    return false
+    // Header on its own line under the unified-log prefix; each window's
+    // state on its own bracketed line below it. Reads top-down: summary,
+    // then one row per window so a long list (Chrome's transient helper
+    // windows during fullscreen) doesn't wrap unreadably.
+    let header = "isAppFullScreen pid=\(pid) ax_windows=\(windows.count) onscreen=\(onScreen.count) result=\(result)"
+    let perWindow = details.map { "[\($0)]" }.joined(separator: "\n")
+    let body = perWindow.isEmpty ? header : "\(header)\n\(perWindow)"
+    Log.controller.debug("\n\(body, privacy: .public)")
+
+    return result
 }
 
 /// CGWindowIDs of `pid`'s windows currently visible on the active space.

@@ -154,7 +154,7 @@ func runStatus() -> Never {
     print("— `front:` and `decision:` below show this terminal's view,")
     print("  not the daemon's. for the daemon's live decisions, run:")
     print("")
-    print("          houdini logs controller")
+    print("          houdini logs")
     print("")
     let fsStr = fullscreen.map { $0 ? "yes" : "no" } ?? "unknown"
     print("front:    \(frontName) (pid=\(frontPIDStr), fullscreen=\(fsStr))")
@@ -172,36 +172,27 @@ func runVersion() -> Never {
 
 // MARK: - logs
 
-/// Streams houdini's entries from the unified log by shelling out to
-/// `/usr/bin/log stream`. An optional category argument narrows the
-/// stream to one of `controller`, `adapter`, or `general`. `adapter`
-/// uses `--level debug` because subprocess output is logged there;
-/// the rest stay at `info`. For history, use `log show` directly.
+/// Streams every houdini unified-log entry by shelling out to
+/// `/usr/bin/log stream`. Always at `--level debug` and across every
+/// category, so a single command surfaces everything we'd want for a
+/// repro — controller HIDE/SHOW snapshots, the per-window
+/// `isAppFullScreen` diagnostic, mediaremote-adapter subprocess output,
+/// and startup/shutdown notices. For history, use `log show` with the
+/// same predicate.
 @MainActor
 func runLogs(args: [String]) -> Never {
-    if args.count > 1 {
-        die("too many arguments for logs — try: houdini logs [controller|adapter|general]")
+    if !args.isEmpty {
+        die("logs takes no arguments — `houdini logs` streams every houdini entry at debug level")
     }
 
-    let (category, level): (String?, String) = switch args.first {
-    case nil: (nil, "info")
-    case "controller": ("controller", "info")
-    case "adapter": ("adapter", "debug")
-    case "general": ("general", "info")
-    case let other?: die("unknown category '\(other)' — expected: controller, adapter, general")
-    }
-
-    var predicate = "subsystem == \"\(Log.subsystem)\""
-    if let category {
-        predicate += " AND category == \"\(category)\""
-    }
+    let predicate = "subsystem == \"\(Log.subsystem)\""
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/log")
     proc.arguments = [
         "stream",
         "--predicate", predicate,
-        "--level", level,
+        "--level", "debug",
         "--style", "compact",
     ]
 
@@ -256,11 +247,11 @@ func usage() {
       houdini                   Run the daemon (invoked by brew services)
       houdini status            Print frontmost/Now-Playing state and the
                                 hide/show decision the daemon would make
-      houdini logs [category]   Stream houdini's unified-log entries.
-                                Optional category narrows the stream:
-                                  controller  HIDE/SHOW decisions
-                                  adapter     mediaremote-adapter output
-                                  general     startup, shutdown, warnings
+      houdini logs              Stream every houdini unified-log entry
+                                across all categories at debug level —
+                                controller decisions, the per-window
+                                fullscreen diagnostic, mediaremote-
+                                adapter output, startup notices, etc.
       houdini version           Print version
       houdini help              Print this help
 

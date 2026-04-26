@@ -51,10 +51,12 @@ Running the binary directly `houdini` is useful for debugging; `brew services` i
 ```bash
 houdini status                    # print frontmost / Now-Playing state and the
                                   # hide/show decision the daemon would make
-houdini logs [category]           # stream houdini's unified-log entries
-                                  # (wraps `log stream --predicate …`);
-                                  # optional category: controller, adapter,
-                                  # or general
+houdini logs                      # stream every houdini unified-log entry
+                                  # across all categories at debug level
+                                  # (controller decisions, fullscreen
+                                  # diagnostics, mediaremote-adapter
+                                  # output, startup notices); wraps
+                                  # `log stream --predicate …`
 houdini version                   # print version
 houdini help                      # full usage
 ```
@@ -93,6 +95,12 @@ Common reasons:
 - **`the Now Playing source is paused`** — play/pause state comes directly from the media app
 - **`frontmost and Now Playing are different processes`** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app
 
+### Safari fullscreen on the first video
+
+Safari sometimes won't honor an in-page fullscreen click — YouTube, Netflix, Vimeo, Twitch, Apple TV+, any site using the HTML5 `requestFullscreen()` API — as native macOS fullscreen on the first request after a fresh Safari launch with autoplaying media. ⌃⌘F can also fail in this state. **Workaround:** pause the video and resume it once, then trigger fullscreen again — every cycle for the rest of the session works normally.
+
+This is an upstream WebKit quirk, not a houdini bug. In the broken state AX never reports a fullscreen window — `houdini logs` shows `ax_windows=1 … result=false` with the same single window throughout, no new window appearing, no `fs=true` — so the daemon has nothing to react to. Pause+resume nudges WebKit's media-session state and the next fullscreen request goes through as native fullscreen.
+
 ### Accessibility permission
 
 If you revoke Accessibility while the daemon is running, `houdini logs` will show:
@@ -120,21 +128,20 @@ brew services start houdini
 
 ### Logs
 
-Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`:
+Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
-- `controller` category — HIDE/SHOW decisions (at `info` level)
-- `adapter` category — output from the mediaremote-adapter subprocess (at `debug`; surface it with `houdini logs adapter`)
-- `general` category — startup/shutdown notices, warnings, errors
+- `controller` — HIDE/SHOW snapshots (info) plus the per-window `isAppFullScreen` diagnostic (debug)
+- `adapter` — output from the mediaremote-adapter subprocess (debug)
+- `general` — startup/shutdown notices, warnings, errors (info)
 
-The system handles retention and rotation — no files on disk to manage.
+`houdini logs` streams everything across all three categories at debug level — no flags, one stream, ready to copy-paste into a bug report. The system handles retention and rotation; nothing on disk to manage.
 
 ```bash
-houdini logs                                              # live stream (all categories)
-houdini logs adapter                                      # subprocess output (debug level)
+houdini logs                                              # live stream — everything, debug level
 log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
 ```
 
-Or open Console.app and filter on subsystem `com.github.mgxv.houdini`.
+Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
 
 
 ## Project layout
