@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs on the same branch when a new push lands —
+# saves runner minutes and gets faster feedback on the latest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: SwiftFormat
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwiftFormat
+        run: brew install swiftformat
+      - name: Show versions
+        run: swiftformat --version
+      - name: Lint Sources/
+        run: swiftformat --lint Sources/
+
+  build:
+    name: Build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          swift --version
+          swiftc --version
+      - name: SwiftPM build
+        run: swift build
+      - name: scripts/build.sh
+        run: ./scripts/build.sh
+      - name: Smoke test
+        run: |
+          ./houdini help
+          ./houdini version
+
+  # One job per matrix variant, run in parallel. Each variant exercises
+  # a different compile-time invariant: TSan for actor/concurrency races,
+  # ASan for memory issues, and a warnings-as-errors release build to
+  # catch any swiftc warning that slipped past local checks.
+  sanitize:
+    name: ${{ matrix.name }}
+    runs-on: macos-15
+    strategy:
+      # Surface every variant's result rather than aborting on the first
+      # failure — sanitizer regressions and warning regressions are
+      # independent failure modes.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Thread sanitizer
+            config: ""
+            extra: "-Xswiftc -sanitize=thread"
+          - name: Address sanitizer
+            config: ""
+            extra: "-Xswiftc -sanitize=address"
+          - name: Release (warnings-as-errors)
+            config: "-c release"
+            extra: "-Xswiftc -warnings-as-errors"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: swift build ${{ matrix.config }} ${{ matrix.extra }}
+        run: |
+          swift build ${{ matrix.config }} \
+            -Xswiftc -swift-version -Xswiftc 6 \
+            -Xswiftc -strict-concurrency=complete \
+            ${{ matrix.extra }}
