@@ -65,8 +65,9 @@ Running the binary directly `houdini` is useful for debugging; `brew services` i
 ## Diagnostics
 
 ```bash
-houdini status                    # print frontmost / Now-Playing state and the
-                                  # hide/show decision the daemon would make
+houdini status                    # print version, whether a daemon is
+                                  # running, and whether Accessibility
+                                  # is granted
 houdini logs                      # stream every houdini unified-log entry
                                   # across all categories at debug level
                                   # (controller decisions, fullscreen
@@ -77,7 +78,7 @@ houdini version                   # print version
 houdini help                      # full usage
 ```
 
-`houdini status` is the fastest way to verify what the daemon is seeing — it reports whether a daemon is running and samples the same inputs (frontmost app, Accessibility fullscreen state, Now Playing) independently of it, so it's safe to run at any time.
+`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, and whether Accessibility has been granted. Exits non-zero if the daemon isn't running or Accessibility is missing, so it composes in scripts. For the live decision (frontmost app, Now Playing, HIDE/SHOW), watch `houdini logs`.
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
@@ -98,26 +99,25 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 
 ### The menu bar isn't hiding
 
-Run `houdini status` — it re-samples the same three inputs the daemon uses and names the first unmet precondition:
+Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a HIDE/SHOW snapshot with the inputs that drove it:
 
 ```
-daemon:   running
-front:    Safari (pid=501, fullscreen=yes)
-playing:  com.spotify.client (pid=1337, playing=yes)
-decision: SHOW  (frontmost and Now Playing are different processes)
+HIDE  front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,fs=yes]
+np=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes]
 ```
 
-Common reasons:
+Hide requires all of: `fs=yes`, `play=yes`, and frontmost/Now-Playing resolving to the same app. Common reasons a SHOW is logged when you expected HIDE:
 
-- **`frontmost is not fullscreen`** — requires native fullscreen: ⌃⌘F, the green-stoplight button, or in-page fullscreen buttons (YouTube, Netflix, QuickTime). Merely-maximized windows that just fill the screen don't qualify.
-- **`nothing is using Now Playing`** — some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget
-- **`the Now Playing source is paused`** — play/pause state comes directly from the media app
-- **`frontmost and Now Playing are different processes`** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app
+- **`fs=no`** — requires native fullscreen: ⌃⌘F, the green-stoplight button, or in-page fullscreen buttons (YouTube, Netflix, QuickTime). Merely-maximized windows that just fill the screen don't qualify.
+- **`np=...[pid=null,...]`** — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget.
+- **`play=no`** — the Now Playing source is paused; play/pause state comes directly from the media app.
+- **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
 
 ### Is it actually running?
 
 ```bash
-houdini status                     # prints `daemon: running` or `not running`
+houdini status                     # prints `daemon: running` / `not running`;
+                                   # exits non-zero if not running or AX missing
 brew services info houdini         # launchd view: Running / Loaded / PID
 pgrep -afl houdini                 # confirms the Swift daemon is alive
 pgrep -afl mediaremote-adapter     # confirms the Perl subprocess it spawns
