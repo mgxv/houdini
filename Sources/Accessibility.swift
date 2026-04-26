@@ -128,21 +128,35 @@ final class AXWatcher {
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let appElement = AXUIElementCreateApplication(pid)
 
-        AXObserverAddNotification(obs, appElement,
-                                  kAXFocusedWindowChangedNotification as CFString,
-                                  refcon)
-        AXObserverAddNotification(obs, appElement,
-                                  kAXMainWindowChangedNotification as CFString,
-                                  refcon)
-        AXObserverAddNotification(obs, appElement,
-                                  kAXWindowCreatedNotification as CFString,
-                                  refcon)
-        AXObserverAddNotification(obs, appElement,
-                                  kAXUIElementDestroyedNotification as CFString,
-                                  refcon)
-        CFRunLoopAddSource(CFRunLoopGetMain(),
-                           AXObserverGetRunLoopSource(obs),
-                           .commonModes)
+        AXObserverAddNotification(
+            obs,
+            appElement,
+            kAXFocusedWindowChangedNotification as CFString,
+            refcon,
+        )
+        AXObserverAddNotification(
+            obs,
+            appElement,
+            kAXMainWindowChangedNotification as CFString,
+            refcon,
+        )
+        AXObserverAddNotification(
+            obs,
+            appElement,
+            kAXWindowCreatedNotification as CFString,
+            refcon,
+        )
+        AXObserverAddNotification(
+            obs,
+            appElement,
+            kAXUIElementDestroyedNotification as CFString,
+            refcon,
+        )
+        CFRunLoopAddSource(
+            CFRunLoopGetMain(),
+            AXObserverGetRunLoopSource(obs),
+            .commonModes,
+        )
 
         observer = obs
         attachedPID = pid
@@ -151,9 +165,11 @@ final class AXWatcher {
 
     func detach() {
         if let obs = observer {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(),
-                                  AXObserverGetRunLoopSource(obs),
-                                  .commonModes)
+            CFRunLoopRemoveSource(
+                CFRunLoopGetMain(),
+                AXObserverGetRunLoopSource(obs),
+                .commonModes,
+            )
         }
         observer = nil
         attachedPID = 0
