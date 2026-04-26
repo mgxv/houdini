@@ -195,9 +195,9 @@ struct NowPlayingSnapshot {
     )
 }
 
-// Decoding lives in an extension so Swift keeps the auto-synthesized
-// memberwise init for `empty` (and any future call site) instead of
-// requiring us to spell it out.
+/// Decoding lives in an extension so Swift keeps the auto-synthesized
+/// memberwise init for `empty` (and any future call site) instead of
+/// requiring us to spell it out.
 extension NowPlayingSnapshot: Decodable {
     private enum CodingKeys: String, CodingKey {
         case playing
