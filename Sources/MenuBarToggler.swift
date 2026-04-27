@@ -19,13 +19,8 @@ final class MenuBarToggler {
     private static let changeNotification =
         Notification.Name("AppleInterfaceFullScreenMenuBarVisibilityChangedNotification")
 
-    private var lastWritten: Bool?
-
-    /// Writes the pref only if the effective value would change.
     func apply(shouldHide: Bool) {
-        let visible = !shouldHide
-        guard visible != lastWritten else { return }
-        write(visible: visible)
+        write(visible: !shouldHide)
     }
 
     /// Force always-visible. Used as startup baseline and on graceful
@@ -34,6 +29,14 @@ final class MenuBarToggler {
         write(visible: true)
     }
 
+    /// No dedup against a remembered "last written" value: caching it
+    /// in-process goes stale the moment the user toggles "Automatically
+    /// hide and show the menu bar in full screen" in System Settings,
+    /// after which we'd skip a write that's actually needed. The write
+    /// is cheap (microseconds in-process plus a single distributed
+    /// notification), and SkyLight no-ops a write that doesn't change
+    /// the stored value, so re-applying on every decision change is
+    /// the simplest correct option.
     private func write(visible: Bool) {
         CFPreferencesSetValue(
             Self.key, visible as CFBoolean,
@@ -46,6 +49,5 @@ final class MenuBarToggler {
             userInfo: nil,
             deliverImmediately: true,
         )
-        lastWritten = visible
     }
 }
