@@ -1,31 +1,48 @@
-// Fuses Now Playing state and frontmost-fullscreen state into one
-// decision, only writing the menu-bar pref when that decision
+// Fuses Now Playing state and Dock-reported fullscreen-Space state
+// into one decision, only writing the menu-bar pref when that decision
 // actually changes.
 
 import Cocoa
 
-/// Hide the menu bar iff the frontmost app is fullscreen *and* is
-/// itself the source of the current Now Playing track. Called once
-/// per evaluation tick via `Snapshot.shouldHide`.
+/// Hide the menu bar iff Dock reports the active Space as fullscreen,
+/// the frontmost app is the FS app, *and* the frontmost app is the
+/// source of the current Now Playing track. Called once per evaluation
+/// tick via `Snapshot.shouldHide`.
 ///
-/// Two identity checks run in parallel for the "same app" test:
+/// `frontPID.rawValue == dockFs.pid` is the multi-display gate: if
+/// the user has FS Chrome on display 2 but is currently focused on a
+/// windowed app on display 1, we'd see `dockFs.isFullScreen=true,
+/// dockFs.pid=Chrome` from the most recent Dock event, but the front
+/// PID would not match, so we keep the menu bar visible. Only when
+/// the focused app is the FS app do we proceed to the same-app-as-
+/// Now-Playing identity check.
+///
+/// Two identity checks run in parallel for the "same app as Now
+/// Playing" test:
 ///   1. Responsibility-PID mapping via the kernel syscall
 ///      (`FrontmostPID.isSameProcess(as:)`), which handles helper
-///      processes for any framework without adapter cooperation.
+///      processes (e.g. WebKit.GPU resolves to Safari) without
+///      adapter cooperation.
 ///   2. The frontmost app's bundle identifier matches the Now Playing
-///      source's `parentApplicationBundleIdentifier`. This is a direct
-///      assertion from MediaRemote about who owns the media, so it
-///      keeps houdini working for browsers even if the private
-///      responsibility syscall regresses.
+///      source's `parentApplicationBundleIdentifier`. Direct assertion
+///      from MediaRemote about who owns the media; keeps houdini
+///      working for browsers even if the responsibility syscall
+///      regresses.
 func shouldHideMenuBar(
-    fullScreen: Bool,
+    dockFs: DockFullScreenState,
     isPlaying: Bool,
     frontPID: FrontmostPID?,
     frontBundle: String?,
     nowPlayingPID: NowPlayingPID?,
     nowPlayingParentBundle: String?,
 ) -> Bool {
-    guard fullScreen, isPlaying, let frontPID, let nowPlayingPID else {
+    guard dockFs.isFullScreen,
+          isPlaying,
+          let frontPID,
+          let nowPlayingPID,
+          let dockFsPID = dockFs.pid,
+          frontPID.rawValue == dockFsPID
+    else {
         return false
     }
     if frontPID.isSameProcess(as: nowPlayingPID) { return true }
@@ -55,7 +72,7 @@ final class Controller: NSObject {
         let frontPID: FrontmostPID?
         let frontName: String
         let frontBundle: String?
-        let fullScreen: Bool
+        let dockFs: DockFullScreenState
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
         let nowPlayingBundle: String?
@@ -65,7 +82,7 @@ final class Controller: NSObject {
 
         var shouldHide: Bool {
             shouldHideMenuBar(
-                fullScreen: fullScreen,
+                dockFs: dockFs,
                 isPlaying: isPlaying,
                 frontPID: frontPID,
                 frontBundle: frontBundle,
@@ -76,6 +93,7 @@ final class Controller: NSObject {
     }
 
     private let menuBar: MenuBarToggler
+    private var dockFs: DockFullScreenState = .initial
     private var isPlaying: Bool = false
     private var nowPlayingPID: NowPlayingPID?
     private var nowPlayingBundle: String?
@@ -84,8 +102,8 @@ final class Controller: NSObject {
     private var nowPlayingMediaType: String?
     private var lastSnapshot: Snapshot?
 
-    private lazy var axWatcher = AXWatcher { [weak self] in
-        self?.evaluate()
+    private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] state in
+        self?.updateDockFullScreen(state)
     }
 
     init(menuBar: MenuBarToggler) {
@@ -93,27 +111,29 @@ final class Controller: NSObject {
         super.init()
     }
 
-    func start() {
+    /// Throws if the dock-space watcher fails to spawn — that channel
+    /// is load-bearing for fullscreen detection, so the caller dies
+    /// rather than continuing in a degraded state.
+    func start() throws {
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(onFrontAppChange(_:)),
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil,
         )
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(onSpaceChange(_:)),
-            name: NSWorkspace.activeSpaceDidChangeNotification,
-            object: nil,
-        )
+        try dockSpaceWatcher.start()
         evaluate()
+    }
+
+    /// Tear down the dock-space watcher's subprocess. Called from the
+    /// daemon's signal handler so unexpected-exit detection in the
+    /// termination handler doesn't fire `die` during graceful
+    /// shutdown.
+    func stop() {
+        dockSpaceWatcher.stop()
     }
 
     @objc private func onFrontAppChange(_: Notification) {
-        evaluate()
-    }
-
-    @objc private func onSpaceChange(_: Notification) {
         evaluate()
     }
 
@@ -129,6 +149,13 @@ final class Controller: NSObject {
         evaluate()
     }
 
+    /// Called by `DockSpaceWatcher` for every parsed `Space Forces
+    /// Hidden:` line.
+    private func updateDockFullScreen(_ state: DockFullScreenState) {
+        dockFs = state
+        evaluate()
+    }
+
     private func evaluate() {
         let snap = takeSnapshot()
         guard snap != lastSnapshot else { return }
@@ -138,21 +165,19 @@ final class Controller: NSObject {
         logSnapshot(snap)
     }
 
-    /// Read the current frontmost app, (re-)subscribe the AX watcher to
-    /// it, and sample its fullscreen state. Called on every evaluation
-    /// tick because the frontmost PID can change at any time.
+    /// Sample the frontmost app and combine with the cached Now
+    /// Playing and Dock-FS state into an immutable snapshot.
     private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let frontName = frontApp?.localizedName ?? "(unknown)"
         let frontBundle = frontApp?.bundleIdentifier
-        axWatcher.attach(pid: frontPID?.rawValue)
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
             frontBundle: frontBundle,
-            fullScreen: isAppFullScreen(pid: frontPID?.rawValue),
+            dockFs: dockFs,
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
             nowPlayingBundle: nowPlayingBundle,
@@ -166,26 +191,29 @@ final class Controller: NSObject {
     /// decision + frontmost on the first row, Now Playing on the second.
     /// Format:
     ///
-    ///   {HIDE|SHOW}  front=<head>[pid=<pid>,name=<name>,bundle=<bundle>,fs=<yes|no>]
+    ///   {HIDE|SHOW}  front=<head>[pid=<pid>,name=<name>,bundle=<bundle>,fs=<yes|no>,fsPid=<pid>]
     ///   np=<head>[pid=<pid>,bundle=<bundle>,parent=<parent>,resp=<resp>,play=<yes|no>,rate=<rate>,type=<type>]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
     /// `WebKit.GPU`) — a cheap visual anchor for scanning. Empty when
-    /// the bundle is nil. The bracketed body emits every original field;
-    /// missing optionals are explicit `null` (so absent vs. empty stays
-    /// distinguishable from the log alone). String values with spaces
-    /// are double-quoted so a downstream space-tokenizing parser sees
-    /// them as one field.
+    /// the bundle is nil. The bracketed body emits every original
+    /// field; missing optionals are explicit `null` (so absent vs.
+    /// empty stays distinguishable from the log alone). String values
+    /// with spaces are double-quoted so a downstream space-tokenizing
+    /// parser sees them as one field.
     ///
-    /// `rate` is `playbackRate` as the raw Double (`0.0` paused, `1.0`
-    /// normal, fractional for variable-speed playback); `null` when
-    /// the source didn't report it. `type` is `mediaType` with the
-    /// `kMRMediaRemoteNowPlayingInfoType` prefix stripped and the tail
-    /// lowercased (`audio`, `video`, `none`); `null` when the source
-    /// didn't set it — most non-audio apps don't.
+    /// `fs` is the dock-reported fullscreen state of the active Space;
+    /// `fsPid` is the FS app's PID from the same Dock event, or `null`
+    /// when not fullscreen. `rate` is `playbackRate` as the raw Double
+    /// (`0.0` paused, `1.0` normal, fractional for variable-speed
+    /// playback); `null` when the source didn't report it. `type` is
+    /// `mediaType` with the `kMRMediaRemoteNowPlayingInfoType` prefix
+    /// stripped and the tail lowercased (`audio`, `video`, `none`);
+    /// `null` when the source didn't set it — most non-audio apps
+    /// don't.
     ///
     /// Example:
-    ///   HIDE  front=Safari[pid=37860,name="Safari",bundle=com.apple.Safari,fs=yes]
+    ///   HIDE  front=Safari[pid=37860,name="Safari",bundle=com.apple.Safari,fs=yes,fsPid=37860]
     ///   np=WebKit.GPU[pid=37865,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=37860,play=yes,rate=1.0,type=null]
     ///
     /// Leading `\n` pushes the body onto its own row under the
@@ -209,7 +237,8 @@ final class Controller: NSObject {
             "pid=\(formatNullable(snap.frontPID?.rawValue))",
             "name=\(quoteString(snap.frontName))",
             "bundle=\(formatNullableString(snap.frontBundle))",
-            "fs=\(snap.fullScreen ? "yes" : "no")",
+            "fs=\(snap.dockFs.isFullScreen ? "yes" : "no")",
+            "fsPid=\(formatNullable(snap.dockFs.pid))",
         ]
         return "\(head)[\(fields.joined(separator: ","))]"
     }

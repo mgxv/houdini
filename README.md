@@ -24,6 +24,8 @@ houdini hides the menu bar only when **all three** are true:
 
 When any one becomes false, the menu bar comes back.
 
+Internally, (1) and (2) come from Dock's own `dock-visibility` log channel — houdini subscribes to `/usr/bin/log stream` with a predicate that filters to the one line Dock emits at every Space transition (engage and exit alike), which carries the active Space's fullscreen state and the FS app's PID. (3) comes from the system MediaRemote framework via the vendored `mediaremote-adapter` subprocess. Both signals are public, unentitled APIs.
+
 **Hardware note.** Houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2024+).
 
 - **Notched:** the menu-bar slot is permanently reserved for the notch, so toggling the fullscreen menu-bar preference doesn't change the window's content area — show/hide is purely visual.
@@ -48,13 +50,6 @@ Then start the service:
 brew services start houdini
 ```
 
-houdini needs Accessibility to detect whether the frontmost app is in fullscreen.
-
-- `brew services start houdini` — triggers the prompt on a fresh install
-- `brew services restart houdini` — re-triggers it when permission is missing (after an upgrade, after revocation, or if the original prompt was dismissed)
-
-The restart form works in both cases, so when in doubt, use it.
-
 ## Usage
 
 ```bash
@@ -64,29 +59,28 @@ brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 ```
 
-Running the binary directly `houdini` is useful for debugging; `brew services` is the normal path.
+Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
 
 ## Diagnostics
 
 ```bash
-houdini status                    # print version, whether a daemon is
-                                  # running, and whether Accessibility
-                                  # is granted
+houdini status                    # print version and whether a daemon
+                                  # is running
 houdini logs                      # stream every houdini unified-log entry
                                   # across all categories at debug level
-                                  # (controller decisions, fullscreen
-                                  # diagnostics, mediaremote-adapter
-                                  # output, startup notices); wraps
+                                  # (controller decisions, dock-visibility
+                                  # events, mediaremote-adapter output,
+                                  # startup notices); wraps
                                   # `log stream --predicate …`
 houdini version                   # print version
 houdini help                      # full usage
 ```
 
-`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, and whether Accessibility has been granted. Exits non-zero if the daemon isn't running or Accessibility is missing, so it composes in scripts. For the live decision (frontmost app, Now Playing, HIDE/SHOW), watch `houdini logs`.
+`houdini status` is the fastest way to confirm the install: which version is in your `$PATH` and whether a daemon currently holds the instance lock. Exits non-zero if the daemon isn't running, so it composes in scripts. For the live decision (frontmost app, Now Playing, HIDE/SHOW), watch `houdini logs`.
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
-- `controller` — HIDE/SHOW snapshots (info) plus the per-window `isAppFullScreen` diagnostic (debug)
+- `controller` — HIDE/SHOW snapshots (info) plus parsed `dock_visibility` events from the Dock log channel (debug)
 - `adapter` — output from the mediaremote-adapter subprocess (debug)
 - `general` — startup/shutdown notices, warnings, errors (info)
 
@@ -106,13 +100,14 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a HIDE/SHOW snapshot with the inputs that drove it:
 
 ```
-HIDE  front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,fs=yes]
+HIDE  front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,fs=yes,fsPid=501]
 np=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,rate=1.0,type=null]
 ```
 
-Hide requires all of: `fs=yes`, `play=yes`, and frontmost/Now-Playing resolving to the same app. Common reasons a SHOW is logged when you expected HIDE:
+Hide requires all of: `fs=yes` (Dock has reported a fullscreen Space), the frontmost `pid` matching `fsPid` (the FS-Space owner), `play=yes`, and frontmost/Now-Playing resolving to the same app. Common reasons a SHOW is logged when you expected HIDE:
 
-- **`fs=no`** — requires native fullscreen: ⌃⌘F, the green-stoplight button, or in-page fullscreen buttons (YouTube, Netflix, QuickTime). Merely-maximized windows that just fill the screen don't qualify.
+- **`fs=no`** — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons in YouTube, Netflix, QuickTime) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
+- **`fs=yes` but `pid ≠ fsPid`** — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
 - **`np=...[pid=null,...]`** — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget.
 - **`play=no`** — the Now Playing source is paused; play/pause state comes directly from the media app.
 - **`rate=...`** — `playbackRate` from MediaRemote, raw value (`0.0` paused, `1.0` normal, fractional for variable-speed playback). `null` when the source didn't report it. Diagnostic only — `play=yes/no` is what drives the decision, but a `play=no, rate=1.0` mismatch is a clean signal that you've caught a multi-callback transient inside MediaRemote.
@@ -123,35 +118,19 @@ Hide requires all of: `fs=yes`, `play=yes`, and frontmost/Now-Playing resolving 
 
 ```bash
 houdini status                     # prints `daemon: running` / `not running`;
-                                   # exits non-zero if not running or AX missing
+                                   # exits non-zero if not running
 brew services info houdini         # launchd view: Running / Loaded / PID
 pgrep -afl houdini                 # confirms the Swift daemon is alive
-pgrep -afl mediaremote-adapter     # confirms the Perl subprocess it spawns
+pgrep -afl mediaremote-adapter     # confirms the Perl Now-Playing subprocess
+pgrep -afl 'log stream.*dock'      # confirms the dock-visibility subscription
 ```
 
-A healthy install shows **two** processes — the `houdini` binary and the `/usr/bin/perl … mediaremote-adapter.pl stream …` child it spawns for Now-Playing events. If the Perl child dies, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+A healthy install shows **three** processes — the `houdini` binary plus two subprocesses it spawns:
 
-### Safari fullscreen on the first video
+- `/usr/bin/perl … mediaremote-adapter.pl stream …` — Now-Playing event source
+- `/usr/bin/log stream --predicate …com.apple.dock…` — Dock fullscreen-state event source
 
-Safari sometimes won't honor an in-page fullscreen click — YouTube, Netflix, Vimeo, Twitch, Apple TV+, any site using the HTML5 `requestFullscreen()` API — as native macOS fullscreen on the first request after a fresh Safari launch with autoplaying media. ⌃⌘F can also fail in this state. **Workaround:** pause the video and resume it once, then trigger fullscreen again — every cycle for the rest of the session works normally.
-
-This is an upstream WebKit quirk, not a houdini bug. In the broken state AX never reports a fullscreen window — `houdini logs` shows `ax_windows=1 … result=false` with the same single window throughout, no new window appearing, no `fs=true` — so the daemon has nothing to react to. Pause+resume nudges WebKit's media-session state and the next fullscreen request goes through as native fullscreen.
-
-### Accessibility permission
-
-If you revoke Accessibility while the daemon is running, `houdini logs` will show:
-
-```
-Accessibility permission appears to have been revoked; fullscreen detection is disabled.
-```
-
-(The same message is echoed to stderr with a `houdini:` prefix when the binary runs in a foreground terminal.) To recover, run:
-
-```bash
-brew services restart houdini
-```
-
-That re-triggers the Accessibility prompt; toggle houdini back on.
+If either subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
 
 ### Starting clean
 
@@ -163,6 +142,8 @@ pkill -x houdini                   # kill any foreground or orphan houdini
 pkill -f mediaremote-adapter       # kill any orphan Perl subprocesses
 brew services start houdini
 ```
+
+houdini terminates its child `log stream` subprocess on shutdown, so a separate `pkill` for it isn't needed.
 
 ## Project layout
 

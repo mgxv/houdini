@@ -16,10 +16,10 @@ enum Log {
     static let subsystem = "com.github.mgxv.houdini"
 
     /// Two streams: the HIDE/SHOW snapshot emitted by the evaluation
-    /// loop on each decision change (info), and the per-window
-    /// `isAppFullScreen` diagnostic emitted on every evaluation tick
-    /// (debug). Together they describe both what we decided and what
-    /// inputs we observed.
+    /// loop on each decision change (info), and the parsed
+    /// `dock_visibility` events from `DockSpaceWatcher` (debug).
+    /// Together they describe both what we decided and what inputs we
+    /// observed.
     static let controller = Logger(subsystem: subsystem, category: "controller")
 
     /// mediaremote-adapter subprocess output, line by line. Logged at

@@ -11,7 +11,6 @@ import Foundation
 @MainActor
 func runForeground() {
     acquireInstanceLock()
-    ensureAccessibilityPermission()
     let artifacts = locateArtifacts()
 
     let menuBar = MenuBarToggler()
@@ -36,7 +35,11 @@ func runForeground() {
         },
     )
 
-    controller.start()
+    do {
+        try controller.start()
+    } catch {
+        die("failed to start dock-space watcher: \(error)")
+    }
     do {
         try adapter.start()
     } catch {
@@ -46,6 +49,7 @@ func runForeground() {
     let signalSources = installSignalHandlers {
         menuBar.resetToVisible()
         adapter.stop()
+        controller.stop()
     }
 
     Log.general.notice("houdini \(version, privacy: .public) running")
@@ -81,21 +85,14 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
 
 // MARK: - status
 
-/// Exits non-zero when the daemon isn't running or Accessibility is
-/// missing, so `houdini status && …` is a usable script primitive.
+/// Exits non-zero when the daemon isn't running, so
+/// `houdini status && …` is a usable script primitive.
 @MainActor
 func runStatus() -> Never {
     let daemonRunning = probeDaemonRunning()
-    let axGranted = isAccessibilityTrusted()
     print("version:  houdini \(version)")
     print("daemon:   \(daemonRunning ? "running" : "not running")")
-    if axGranted {
-        print("perms:    Accessibility granted")
-    } else {
-        print("perms:    Accessibility not granted")
-        print("          brew services restart houdini")
-    }
-    exit(daemonRunning && axGranted ? 0 : 1)
+    exit(daemonRunning ? 0 : 1)
 }
 
 // MARK: - version
@@ -111,10 +108,9 @@ func runVersion() -> Never {
 /// Streams every houdini unified-log entry by shelling out to
 /// `/usr/bin/log stream`. Always at `--level debug` and across every
 /// category, so a single command surfaces everything we'd want for a
-/// repro — controller HIDE/SHOW snapshots, the per-window
-/// `isAppFullScreen` diagnostic, mediaremote-adapter subprocess output,
-/// and startup/shutdown notices. For history, use `log show` with the
-/// same predicate.
+/// repro — controller HIDE/SHOW snapshots, dock-visibility events,
+/// mediaremote-adapter subprocess output, and startup/shutdown
+/// notices. For history, use `log show` with the same predicate.
 @MainActor
 func runLogs(args: [String]) -> Never {
     if !args.isEmpty {
@@ -181,14 +177,13 @@ func usage() {
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
-      houdini status            Print version, whether a daemon is running,
-                                and whether Accessibility is granted.
-                                Exits non-zero if either is missing.
+      houdini status            Print version and whether a daemon is
+                                running. Exits non-zero if not running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
-                                controller decisions, the per-window
-                                fullscreen diagnostic, mediaremote-
-                                adapter output, startup notices, etc.
+                                controller decisions, dock-visibility
+                                events, mediaremote-adapter output,
+                                startup notices, etc.
       houdini version           Print version
       houdini help              Print this help
 
