@@ -16,11 +16,30 @@
 // `await`. The `UpdateHandler` callback is `@Sendable @MainActor`, so
 // every decision-affecting event reaches the controller on main.
 //
+// The shutdown flag is held in an `OSAllocatedUnfairLock` rather than
+// in actor-isolated state so `stop()` can set it synchronously before
+// `terminate()`. Were the flag actor-isolated, the only way to set it
+// from `nonisolated stop()` would be `Task { await markStopping() }`,
+// which can race the kernel signal — `handleTermination` would then
+// observe `stopping == false` during a clean Ctrl-C and call
+// `die(...)` for what is in fact a graceful shutdown.
+//
+// Snapshot delivery to the controller is batched per chunk through a
+// single `await MainActor.run { … }`. The earlier per-snapshot
+// `Task { @MainActor in … }` pattern created one unstructured task
+// per event; under actor reentrancy (a second chunk arriving while
+// the first is mid-loop), tasks from the second chunk could be
+// enqueued on MainActor between two snapshots from the first, so the
+// controller observed events out of order. Batching collapses each
+// chunk into a single MainActor hop and preserves FIFO ordering
+// across chunks.
+//
 // `fetchNowPlayingOnce` at the bottom of the file runs the adapter in
 // one-shot `get` mode for the `status` subcommand; it's @MainActor
 // and blocks the caller until the subprocess exits.
 
 import Foundation
+import os
 
 actor AdapterClient {
     /// Callback delivered on the main actor whenever the adapter emits
@@ -61,7 +80,7 @@ actor AdapterClient {
     private let stderrPipe = Pipe()
     private var stdoutBuffer = LineBuffer()
     private var stderrBuffer = LineBuffer()
-    private var stopping = false
+    private let isStopping = OSAllocatedUnfairLock<Bool>(initialState: false)
     private let onUpdate: UpdateHandler
 
     init(artifacts: AdapterArtifacts, onUpdate: @escaping UpdateHandler) {
@@ -81,7 +100,7 @@ actor AdapterClient {
         process.terminationHandler = { [weak self] proc in
             // Capture the scalar status synchronously so the Process
             // reference itself doesn't cross into the Task closure;
-            // the actor-internal `stopping` flag is checked after hop.
+            // the shutdown flag is checked after the actor hop.
             let status = proc.terminationStatus
             Task { await self?.handleTermination(status: status) }
         }
@@ -98,35 +117,55 @@ actor AdapterClient {
 
     /// Terminates the subprocess. `nonisolated` because signal handlers
     /// call this synchronously during shutdown and can't `await`;
-    /// `Process.terminate()` is thread-safe per Foundation docs. Sets
-    /// the actor-isolated `stopping` flag via a detached task — the
-    /// race against `handleTermination` below is benign: in the worst
-    /// case we log an "unexpected exit" line we could have suppressed.
+    /// `Process.terminate()` is thread-safe per Foundation docs. The
+    /// shutdown flag is set *before* `terminate()` so that even if the
+    /// kernel signal lands and `terminationHandler` fires immediately,
+    /// `handleTermination` will observe `stopping == true` and skip
+    /// the `die("unexpected exit…")` path.
     nonisolated func stop() {
-        Task { await self.markStopping() }
+        isStopping.withLock { $0 = true }
         if process.isRunning { process.terminate() }
     }
 
-    private func markStopping() {
-        stopping = true
-    }
-
     private func handleTermination(status: Int32) {
-        guard !stopping else { return }
+        if isStopping.withLock({ $0 }) { return }
         Task { @MainActor in
             die("mediaremote-adapter exited unexpectedly (status=\(status))")
         }
     }
 
-    /// Accumulates a stdout chunk and flushes any complete (newline-
-    /// terminated) lines to `handleStdoutLine`. If an in-progress line
+    /// Accumulates a stdout chunk, parses every complete (newline-
+    /// terminated) line into a snapshot, and delivers all snapshots
+    /// from this chunk to the controller in a single `MainActor.run`
+    /// hop. The single hop is what preserves ordering: an actor can
+    /// be re-entered while suspended on `await`, so per-snapshot hops
+    /// risk interleaving snapshots from a later chunk between two
+    /// snapshots from an earlier one. Batching collapses the chunk
+    /// into one atomic delivery, and chunks themselves reach the
+    /// actor in submission order, so MainActor sees snapshots in the
+    /// same order the adapter emitted them. If an in-progress line
     /// exceeds the cap, the subprocess is malfunctioning — `die` and
     /// let launchd restart us.
-    private func ingestStdout(_ chunk: Data) {
-        stdoutBuffer.ingest(chunk) { self.handleStdoutLine($0) }
+    private func ingestStdout(_ chunk: Data) async {
+        var snapshots: [NowPlayingSnapshot] = []
+        stdoutBuffer.ingest(chunk) { line in
+            if let snapshot = self.parseStdoutLine(line) {
+                snapshots.append(snapshot)
+            }
+        }
         if stdoutBuffer.pendingBytes > Self.stdoutLineLimit {
             Task { @MainActor in
                 die("adapter stdout exceeded \(Self.stdoutLineLimit / 1024) KiB without a newline")
+            }
+            return
+        }
+        guard !snapshots.isEmpty else { return }
+
+        let handler = onUpdate
+        let captured = snapshots
+        await MainActor.run {
+            for snapshot in captured {
+                handler(snapshot)
             }
         }
     }
@@ -147,8 +186,15 @@ actor AdapterClient {
         }
     }
 
-    private func handleStdoutLine(_ line: Data) {
-        guard !line.isEmpty else { return }
+    /// Decodes one stdout line into a snapshot, or returns nil for
+    /// blanks, non-`data` envelopes, and undecodable input. Decode
+    /// errors emit a `warn` via a detached MainActor task; the line is
+    /// then dropped so a single bad event doesn't stall the stream.
+    /// Pure-by-design except for that warn — the snapshot dispatch
+    /// itself happens in `ingestStdout` after the whole chunk is
+    /// parsed, so ordering is preserved.
+    private func parseStdoutLine(_ line: Data) -> NowPlayingSnapshot? {
+        guard !line.isEmpty else { return nil }
 
         let event: NowPlayingStreamEvent
         do {
@@ -158,14 +204,11 @@ actor AdapterClient {
             Task { @MainActor in
                 warn("could not decode adapter line: \(preview) (\(error))")
             }
-            return
+            return nil
         }
 
-        guard event.type == "data" else { return } // ignore heartbeats / errors
-        let snapshot = event.payload ?? .empty // null/missing payload → nothing playing
-
-        let handler = onUpdate
-        Task { @MainActor in handler(snapshot) }
+        guard event.type == "data" else { return nil } // ignore heartbeats / errors
+        return event.payload ?? .empty // null/missing payload → nothing playing
     }
 
     /// Shared decoder. Stateless once configured; reusing avoids
