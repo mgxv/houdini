@@ -208,7 +208,7 @@ actor AdapterClient {
         }
 
         guard event.type == "data" else { return nil } // ignore heartbeats / errors
-        return event.payload ?? .empty // null/missing payload → nothing playing
+        return event.payload ?? .empty
     }
 
     /// Shared decoder. Stateless once configured; reusing avoids
