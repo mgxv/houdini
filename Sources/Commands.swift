@@ -10,8 +10,8 @@ import Foundation
 /// `brew services`; runs fine in a terminal for local debugging too.
 @MainActor
 func runForeground() {
-    acquireInstanceLock()
     let artifacts = locateArtifacts()
+    acquireInstanceLock()
 
     let menuBar = MenuBarToggler()
     menuBar.resetToVisible()
