@@ -25,24 +25,13 @@ class Houdini < Formula
 
   def caveats
     <<~EOS
-      Accessibility permission
-      ---------------------------------------------------------------
-      houdini needs Accessibility to detect whether the frontmost app
-      is in fullscreen. `brew services start houdini` triggers the
-      prompt on a fresh install; `brew services restart houdini`
-      re-triggers it when permission is missing (after an upgrade,
-      after revocation, or if the original prompt was dismissed).
-      The restart form works in both cases, so when in doubt, use it.
-
-        Grant Accessibility permission to houdini:
-             brew services restart houdini
-
       After upgrading
       ---------------------------------------------------------------
-      `brew upgrade houdini` installs a freshly-signed binary, which
-      macOS treats as a new identity for Accessibility — the existing
-      grant no longer applies. Run `brew services restart houdini` to
-      re-trigger the prompt and re-grant.
+      `brew upgrade houdini` installs the new binary on disk but
+      doesn't cycle the running daemon, so the old version stays
+      resident until you restart:
+
+          brew services restart houdini
 
       How it works
       ---------------------------------------------------------------

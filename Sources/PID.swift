@@ -2,10 +2,6 @@
 // process identifier plays in houdini's decision logic. Separating
 // the two types means the compiler catches mix-ups like passing a
 // frontmost PID where a Now Playing PID is expected.
-//
-// The low-level Accessibility helpers intentionally still take raw
-// `pid_t` — they're infrastructure, not role-aware. Callers extract
-// `.rawValue` at that boundary.
 
 import Foundation
 
