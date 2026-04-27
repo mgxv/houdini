@@ -178,24 +178,11 @@ actor AdapterClient {
 /// the PID's own bundle id; `parentBundle` is MediaRemote's assertion
 /// of the logical owning app, set for helper-process owners (e.g.
 /// `com.apple.Safari` when the pid belongs to WebKit.GPU).
-///
-/// `playbackRate` and `mediaType` are diagnostic-only — neither
-/// affects the hide/show decision. They're decoded here so the
-/// controller log can surface them. Both are sparsely populated:
-/// `playbackRate` is usually present when something is playing but
-/// some events omit it, and `mediaType` is only set by audio-aware
-/// apps (Spotify, Music, Podcasts) — most video apps don't.
-///
-/// `mediaType` is normalized at decode: the `kMRMediaRemoteNowPlayingInfoType`
-/// prefix is stripped and the tail is lowercased, so consumers see
-/// `audio`/`video`/`none` rather than the Apple symbol name.
 struct NowPlayingSnapshot {
     let playing: Bool
     let pid: NowPlayingPID?
     let bundle: String?
     let parentBundle: String?
-    let playbackRate: Double?
-    let mediaType: String?
 
     /// All-nil sentinel for "nothing is playing." Returned for
     /// `get`-mode `null`/empty output and for `stream`-mode `data`
@@ -205,8 +192,6 @@ struct NowPlayingSnapshot {
         pid: nil,
         bundle: nil,
         parentBundle: nil,
-        playbackRate: nil,
-        mediaType: nil,
     )
 }
 
@@ -219,8 +204,6 @@ extension NowPlayingSnapshot: Decodable {
         case pid = "processIdentifier"
         case bundle = "bundleIdentifier"
         case parentBundle = "parentApplicationBundleIdentifier"
-        case playbackRate
-        case mediaType
     }
 
     /// Missing keys decode to defaults (`playing` → `false`, optionals
@@ -229,24 +212,12 @@ extension NowPlayingSnapshot: Decodable {
     /// silently degrading to all-nil.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let rawType = try c.decodeIfPresent(String.self, forKey: .mediaType)
         try self.init(
             playing: c.decodeIfPresent(Bool.self, forKey: .playing) ?? false,
             pid: c.decodeIfPresent(NowPlayingPID.self, forKey: .pid),
             bundle: c.decodeIfPresent(String.self, forKey: .bundle),
             parentBundle: c.decodeIfPresent(String.self, forKey: .parentBundle),
-            playbackRate: c.decodeIfPresent(Double.self, forKey: .playbackRate),
-            mediaType: Self.normalizeMediaType(rawType),
         )
-    }
-
-    private static let mediaTypePrefix = "kMRMediaRemoteNowPlayingInfoType"
-    private static func normalizeMediaType(_ raw: String?) -> String? {
-        guard let raw, !raw.isEmpty else { return nil }
-        let tail = raw.hasPrefix(mediaTypePrefix)
-            ? String(raw.dropFirst(mediaTypePrefix.count))
-            : raw
-        return tail.lowercased()
     }
 }
 
