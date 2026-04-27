@@ -1,8 +1,8 @@
 class Houdini < Formula
   desc "Hides the menu bar when the frontmost fullscreen app is playing in Now Playing"
   homepage "https://github.com/mgxv/houdini"
-  url "https://github.com/mgxv/houdini/archive/refs/tags/v0.10.2.tar.gz"
-  sha256 "2231adf918adb499b016f5ef0303c8fe6986146f403ca1a07b2c62a55dacfb86"
+  url "https://github.com/mgxv/houdini/archive/refs/tags/v0.11.0.tar.gz"
+  sha256 "e4df54e6f215dee6dc28a58983953d1a91810c2ba087b36c842008e194cc4819"
   license "MIT"
 
   depends_on macos: :sequoia
