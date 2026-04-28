@@ -94,8 +94,8 @@ final class Controller: NSObject {
     private var nowPlayingParentBundle: String?
     private var lastSnapshot: Snapshot?
 
-    private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] state in
-        self?.updateDockFullScreen(state)
+    private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] event in
+        self?.handleDockEvent(event)
     }
 
     init(menuBar: MenuBarToggler) {
@@ -139,10 +139,32 @@ final class Controller: NSObject {
         evaluate()
     }
 
-    /// Called by `DockSpaceWatcher` for every parsed `Space Forces
-    /// Hidden:` line.
+    private func handleDockEvent(_ event: DockSpaceEvent) {
+        switch event {
+        case let .fullScreenState(state):
+            updateDockFullScreen(state)
+        case .staySpaceChange:
+            onStaySpaceChange()
+        }
+    }
+
     private func updateDockFullScreen(_ state: DockFullScreenState) {
         dockFs = state
+        evaluate()
+    }
+
+    /// Refreshes `dockFs.pid` from `frontmostApplication` so
+    /// `shouldHideMenuBar`'s multi-display gate doesn't reject FS↔FS
+    /// hops with a stale pid. Guarded on cached `isFullScreen` because
+    /// the no-op fires for non-FS hops too; the line's `state` field
+    /// is unreliable across transition phases, so we trust the cache.
+    /// `frontmostApplication` is fresh here — the log subprocess
+    /// pipeline serializes after AppKit propagates the new frontmost.
+    private func onStaySpaceChange() {
+        guard dockFs.isFullScreen,
+              let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        else { return }
+        dockFs = DockFullScreenState(isFullScreen: true, pid: pid)
         evaluate()
     }
 

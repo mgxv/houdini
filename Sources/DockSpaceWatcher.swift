@@ -44,14 +44,27 @@ struct DockFullScreenState: Equatable {
     static let initial = DockFullScreenState(isFullScreen: false, pid: nil)
 }
 
+/// Events from the dock-visibility log channel. `staySpaceChange`
+/// is the `Skipping no-op state update` pulse Dock emits on silent
+/// FS↔FS Space switches — no payload, just "active Space changed."
+enum DockSpaceEvent {
+    case fullScreenState(DockFullScreenState)
+    case staySpaceChange
+}
+
 @MainActor
 final class DockSpaceWatcher {
-    /// Constrains the log stream to Dock's `dock-visibility` category
-    /// and to the one message line that carries the FS state. Together
-    /// they reduce subprocess output to one line per Space transition.
-    private static let logPredicate = #"subsystem == "com.apple.dock" AND category == "dock-visibility" AND eventMessage CONTAINS "Space Forces Hidden:""#  // swiftformat:disable all
+    /// Filters `dock-visibility` to `Space Forces Hidden:` (engage/exit
+    /// transitions; carries pid + fullscreen flag) and `Skipping no-op
+    /// state update` (Dock's wake-up on silent FS↔FS Space switches).
+    private static let logPredicate = """
+    subsystem == "com.apple.dock" \
+    AND category == "dock-visibility" \
+    AND (eventMessage CONTAINS "Space Forces Hidden:" \
+    OR eventMessage CONTAINS "Skipping no-op state update")
+    """
 
-    private let onUpdate: @MainActor (DockFullScreenState) -> Void
+    private let onUpdate: @MainActor (DockSpaceEvent) -> Void
     private var subprocess: Process?
     private var lineBuffer = LineBuffer()
     /// Set by `stop()` so the termination handler can distinguish
@@ -59,7 +72,7 @@ final class DockSpaceWatcher {
     /// an unexpected exit (which is fatal — see termination handler).
     private var stopping = false
 
-    init(onUpdate: @escaping @MainActor (DockFullScreenState) -> Void) {
+    init(onUpdate: @escaping @MainActor (DockSpaceEvent) -> Void) {
         self.onUpdate = onUpdate
     }
 
@@ -78,6 +91,7 @@ final class DockSpaceWatcher {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
         process.arguments = [
             "stream",
+            "--level", "debug",
             "--style", "compact",
             "--predicate", Self.logPredicate,
         ]
@@ -145,34 +159,41 @@ final class DockSpaceWatcher {
     }
 
     /// Drain complete lines from the buffer, parse each, and forward
-    /// state changes to the controller. Non-matching lines (the filter
-    /// header, possible private-redacted variants) are silently
+    /// recognised events to the controller. Non-matching lines (the
+    /// filter header, possible private-redacted variants) are silently
     /// dropped.
     private func ingest(_ chunk: Data) {
         lineBuffer.ingest(chunk) { line in
             guard let text = String(data: line, encoding: .utf8) else { return }
-            guard let state = Self.parse(text) else { return }
-            let pidField = state.pid.map { "\($0)" } ?? "null"
-            Log.controller.debug(
-                "dock_visibility fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
-            )
-            onUpdate(state)
+            guard let event = Self.parse(text) else { return }
+            switch event {
+            case let .fullScreenState(state):
+                let pidField = state.pid.map { "\($0)" } ?? "null"
+                Log.controller.debug(
+                    "dock_visibility fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
+                )
+            case .staySpaceChange:
+                Log.controller.debug("dock_visibility stay_space_change")
+            }
+            onUpdate(event)
         }
     }
 
-    /// Extracts `(isFullScreen, pid?)` from a `Space Forces Hidden:`
-    /// log line. Returns nil for lines that don't carry an unambiguous
-    /// `fullscreen=true|false` token — that includes the `log stream`
-    /// header, any reworded variant Apple may ship in a future macOS,
-    /// and unexpectedly redacted output. The caller treats nil as
-    /// "ignore this line" rather than crashing or guessing a state.
+    /// Returns nil for lines that don't match either expected shape
+    /// (`log stream` header, redacted output) — caller drops them.
     ///
-    /// `pid=NNNNN` only appears on engage messages (the FS app's tile
-    /// names it). Exit messages omit it. A `fullscreen=true` with no
-    /// pid would be unexpected; we still surface the state with
-    /// `pid=nil`, which the controller's `shouldHideMenuBar` rejects
-    /// (the guard requires a non-nil `dockFs.pid`) → SHOW.
-    private static func parse(_ line: String) -> DockFullScreenState? {
+    /// `Skipping no-op state update` is used only as a wake-up
+    /// trigger; its `state` field tracks Dock's transition phases
+    /// unreliably and isn't a source of FS-ness truth.
+    ///
+    /// `Space Forces Hidden:` exit messages omit the pid and surface
+    /// as `pid=nil`, which `shouldHideMenuBar`'s non-nil pid guard
+    /// then rejects.
+    private static func parse(_ line: String) -> DockSpaceEvent? {
+        if line.contains("Skipping no-op state update") {
+            return .staySpaceChange
+        }
+
         let isFullScreen: Bool
         if line.contains("fullscreen=true") {
             isFullScreen = true
@@ -193,6 +214,6 @@ final class DockSpaceWatcher {
             pid = pid_t(digits)
         }
 
-        return DockFullScreenState(isFullScreen: isFullScreen, pid: pid)
+        return .fullScreenState(DockFullScreenState(isFullScreen: isFullScreen, pid: pid))
     }
 }
