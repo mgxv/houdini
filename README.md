@@ -14,6 +14,17 @@
 
 A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. When you switch apps, exit fullscreen, or pause, the menu bar returns. No UI, no hotkeys.
 
+## Who this is for
+
+People who keep the menu bar visible by default but want it out of the way during fullscreen media playback.
+
+macOS's native "Automatically hide and show the menu bar in full screen" pref is all-or-nothing — flip it on and the bar disappears from *every* fullscreen window, including Terminal, your editor, and Figma. houdini scopes the same behavior to "the frontmost fullscreen app is the one driving Now Playing":
+
+- **Fullscreen YouTube / Netflix / Apple TV+ / Music / QuickTime** — bar hides while playing.
+- **Fullscreen Terminal / VS Code / Figma / anything not driving Now Playing** — bar stays put.
+
+Pause, switch apps, or exit fullscreen, and the bar comes back.
+
 ## How it works
 
 houdini hides the menu bar only when **all three** are true:
@@ -24,9 +35,45 @@ houdini hides the menu bar only when **all three** are true:
 
 When any one becomes false, the menu bar comes back.
 
-Internally, (1) and (2) come from Dock's own `dock-visibility` log channel — houdini subscribes to `/usr/bin/log stream` with a predicate that filters to the one line Dock emits at every Space transition (engage and exit alike), which carries the active Space's fullscreen state and the FS app's PID. (3) comes from the system MediaRemote framework via the vendored `mediaremote-adapter` subprocess. Both signals are public, unentitled APIs.
+```
+   ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+   │  AppKit          │    │  Dock log        │    │  MediaRemote     │
+   │  (in-process)    │    │  (subprocess)    │    │  (perl shim)     │
+   └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
+            │                       │                       │
+       frontmost              fs=true|false              isPlaying,
+       changed                + fs↔fs pulse              owning pid
+            │                       │                       │
+            └───────────────────────┼───────────────────────┘
+                                    ▼
+                            ┌───────────────┐
+                            │  Controller   │
+                            └───────┬───────┘
+                                    ▼
+                          shouldHideMenuBar — all of:
+                          (1) active Space is FS
+                          (2) media is playing
+                          (3) frontmost owns FS Space (multi-display gate)
+                          (4) frontmost is the Now Playing source
+                                    │
+                                    ▼
+                               HIDE or SHOW
+                                    │
+                                    ▼
+                       AppleMenuBarVisibleInFullscreen
+                       + DistributedNotification (WindowServer reads the pref)
+```
 
-**Hardware note.** Houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2024+).
+Internally:
+
+- **(1) and (2)** come from Dock's `dock-visibility` log channel, tapped by spawning `/usr/bin/log stream`. The predicate filters to two message shapes:
+  - `Space Forces Hidden:` — emitted on FS entry/exit, carries the active Space's fullscreen flag and the FS app's PID.
+  - `Skipping no-op state update` — emitted on FS↔FS Space switches where Dock's own visibility doesn't need to flip; a payload-less wake-up pulse that lets us refresh the cached FS owner from `NSWorkspace.frontmostApplication`. Without this, switching directly between two fullscreen apps would keep the menu bar in the wrong state.
+- **(3)** comes from the system MediaRemote framework via the vendored `mediaremote-adapter` subprocess (perl is on Apple's MediaRemote allowlist; an unentitled Swift binary isn't).
+
+All signals are public, unentitled APIs.
+
+**Hardware note.** Houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2022+).
 
 - **Notched:** the menu-bar slot is permanently reserved for the notch, so toggling the fullscreen menu-bar preference doesn't change the window's content area — show/hide is purely visual.
 - **Non-notched:** the fullscreen window resizes by the menu-bar height each time, which reflows in-window content (e.g. a web page in Chrome shifts up or down by the menu-bar height).
@@ -108,7 +155,7 @@ Hide requires all of: `fs=yes` (Dock has reported a fullscreen Space), the front
 
 - **`fs=no`** — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons in YouTube, Netflix, QuickTime) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
 - **`fs=yes` but `pid ≠ fsPid`** — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
-- **`np=...[pid=null,...]`** — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget.
+- **`np=[pid=null,...]`** — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget.
 - **`play=no`** — the Now Playing source is paused; play/pause state comes directly from the media app.
 - **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
 
