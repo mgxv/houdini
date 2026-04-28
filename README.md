@@ -127,8 +127,8 @@ houdini help                      # full usage
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
-- `controller` — HIDE/SHOW snapshots (info) plus parsed `dock_visibility` events from the Dock log channel (debug)
-- `adapter` — output from the mediaremote-adapter subprocess (debug)
+- `controller` — HIDE/SHOW snapshots (info), plus per-input breadcrumbs at debug: `dock_visibility` (parsed Dock events), `front_change` (frontmost-app changes), `eval_suppressed` (an evaluation that produced no decision change)
+- `adapter` — `np_event` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug)
 - `general` — startup/shutdown notices, warnings, errors (info)
 
 `houdini logs` streams everything across all three categories at debug level — no flags, one stream, ready to copy-paste into a bug report. The system handles retention and rotation; nothing on disk to manage.
@@ -147,9 +147,13 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a HIDE/SHOW snapshot with the inputs that drove it:
 
 ```
-HIDE  front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,fs=yes,fsPid=501]
+HIDE  trig=adapter front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501]
 np=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes]
 ```
+
+The leading verb is `HIDE` or `SHOW(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, or `app_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, or `adapter`. `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app check actually compares.
+
+Each input also leaves a debug breadcrumb at the boundary, so a wrong decision can be traced back to the data that drove it: `np_event …` per Now Playing event from mediaremote-adapter, `front_change …` when AppKit reports a new frontmost app, `dock_visibility …` per parsed Dock event, and `eval_suppressed trig=…` when the evaluation produced no change.
 
 Hide requires all of: `fs=yes` (Dock has reported a fullscreen Space), the frontmost `pid` matching `fsPid` (the FS-Space owner), `play=yes`, and frontmost/Now-Playing resolving to the same app. Common reasons a SHOW is logged when you expected HIDE:
 

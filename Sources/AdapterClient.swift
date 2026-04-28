@@ -163,8 +163,20 @@ actor AdapterClient {
             return nil
         }
 
+        Log.adapter.debug("\(Self.formatEvent(event), privacy: .public)")
+
         guard event.type == "data" else { return nil } // ignore heartbeats / errors
         return event.payload ?? .empty
+    }
+
+    private static func formatEvent(_ event: NowPlayingStreamEvent) -> String {
+        guard event.type == "data" else { return "np_event type=\(event.type)" }
+        guard let payload = event.payload else { return "np_event type=data payload=null" }
+        let play = payload.playing ? "yes" : "no"
+        let pid = payload.pid.map { "\($0.rawValue)" } ?? "null"
+        let bundle = payload.bundle ?? "null"
+        let parent = payload.parentBundle ?? "null"
+        return "np_event type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent)"
     }
 
     /// Shared to avoid per-line allocation churn.

@@ -83,6 +83,14 @@ extension NowPlayingPID {
     }
 }
 
+extension FrontmostPID {
+    var responsiblePID: pid_t? {
+        let resolved = responsibleProcess(for: rawValue)
+        guard resolved > 0, resolved != rawValue else { return nil }
+        return resolved
+    }
+}
+
 extension FrontmostPID: CustomStringConvertible {
     var description: String {
         String(rawValue)

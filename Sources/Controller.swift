@@ -4,6 +4,41 @@
 
 import Cocoa
 
+enum MenuBarDecision {
+    case hide
+    case showNotFullScreen
+    case showNotPlaying
+    case showNoFrontPid
+    case showNoNowPlayingPid
+    case showFrontNotFsOwner
+    case showAppMismatch
+
+    var shouldHide: Bool {
+        if case .hide = self { return true }
+        return false
+    }
+
+    var tag: String {
+        switch self {
+        case .hide: "HIDE"
+        case .showNotFullScreen: "SHOW(not_fullscreen)"
+        case .showNotPlaying: "SHOW(not_playing)"
+        case .showNoFrontPid: "SHOW(no_front_pid)"
+        case .showNoNowPlayingPid: "SHOW(no_now_playing_pid)"
+        case .showFrontNotFsOwner: "SHOW(front_not_fs_owner)"
+        case .showAppMismatch: "SHOW(app_mismatch)"
+        }
+    }
+}
+
+enum EvalTrigger: String {
+    case start
+    case frontApp = "front_app"
+    case dockFs = "dock_fs"
+    case dockStay = "dock_stay"
+    case adapter
+}
+
 /// `frontPID.rawValue == dockFs.pid` is the multi-display gate: if
 /// FS Chrome is on display 2 but the user is focused on a windowed
 /// app on display 1, the front PID won't match the Dock-reported FS
@@ -18,38 +53,36 @@ import Cocoa
 ///      `parentApplicationBundleIdentifier` — MediaRemote's direct
 ///      assertion of the owning app, a fallback if the responsibility
 ///      syscall regresses.
-func shouldHideMenuBar(
+func menuBarDecision(
     dockFs: DockFullScreenState,
     isPlaying: Bool,
     frontPID: FrontmostPID?,
     frontBundle: String?,
     nowPlayingPID: NowPlayingPID?,
     nowPlayingParentBundle: String?,
-) -> Bool {
-    guard dockFs.isFullScreen,
-          isPlaying,
-          let frontPID,
-          let nowPlayingPID,
-          let dockFsPID = dockFs.pid,
-          frontPID.rawValue == dockFsPID
-    else {
-        return false
+) -> MenuBarDecision {
+    guard dockFs.isFullScreen else { return .showNotFullScreen }
+    guard isPlaying else { return .showNotPlaying }
+    guard let frontPID else { return .showNoFrontPid }
+    guard let nowPlayingPID else { return .showNoNowPlayingPid }
+    guard let dockFsPID = dockFs.pid, frontPID.rawValue == dockFsPID else {
+        return .showFrontNotFsOwner
     }
-    if frontPID.isSameProcess(as: nowPlayingPID) { return true }
+    if frontPID.isSameProcess(as: nowPlayingPID) { return .hide }
     if let frontBundle, let parent = nowPlayingParentBundle,
        !parent.isEmpty, parent == frontBundle
     {
-        return true
+        return .hide
     }
-    return false
+    return .showAppMismatch
 }
 
 @MainActor
 final class Controller: NSObject {
-    /// `shouldHide` is derived, so Equatable on the inputs alone
-    /// dedups redundant writes without caching the decision.
-    /// `frontPID` and `nowPlayingPID` are distinct types so the
-    /// compiler blocks accidental role swaps.
+    /// Decision is derived, so Equatable on the inputs alone dedups
+    /// redundant writes without caching it. `frontPID` and
+    /// `nowPlayingPID` are distinct types so the compiler blocks
+    /// accidental role swaps.
     private struct Snapshot: Equatable {
         let frontPID: FrontmostPID?
         let frontName: String
@@ -60,8 +93,8 @@ final class Controller: NSObject {
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
 
-        var shouldHide: Bool {
-            shouldHideMenuBar(
+        var decision: MenuBarDecision {
+            menuBarDecision(
                 dockFs: dockFs,
                 isPlaying: isPlaying,
                 frontPID: frontPID,
@@ -99,7 +132,7 @@ final class Controller: NSObject {
             object: nil,
         )
         try dockSpaceWatcher.start()
-        evaluate()
+        evaluate(trigger: .start)
     }
 
     /// Called from the daemon's signal handler so the watcher's
@@ -109,7 +142,9 @@ final class Controller: NSObject {
     }
 
     @objc private func onFrontAppChange(_: Notification) {
-        evaluate()
+        let app = NSWorkspace.shared.frontmostApplication
+        Log.controller.debug("\(Self.formatFrontChange(app), privacy: .public)")
+        evaluate(trigger: .frontApp)
     }
 
     func updateMedia(_ snapshot: NowPlayingSnapshot) {
@@ -117,7 +152,7 @@ final class Controller: NSObject {
         nowPlayingPID = snapshot.pid
         nowPlayingBundle = snapshot.bundle
         nowPlayingParentBundle = snapshot.parentBundle
-        evaluate()
+        evaluate(trigger: .adapter)
     }
 
     private func handleDockEvent(_ event: DockSpaceEvent) {
@@ -131,7 +166,7 @@ final class Controller: NSObject {
 
     private func updateDockFullScreen(_ state: DockFullScreenState) {
         dockFs = state
-        evaluate()
+        evaluate(trigger: .dockFs)
     }
 
     /// Refreshes `dockFs.pid` so the multi-display gate doesn't
@@ -146,16 +181,21 @@ final class Controller: NSObject {
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return }
         dockFs = DockFullScreenState(isFullScreen: true, pid: pid)
-        evaluate()
+        evaluate(trigger: .dockStay)
     }
 
-    private func evaluate() {
+    private func evaluate(trigger: EvalTrigger) {
         let snap = takeSnapshot()
-        guard snap != lastSnapshot else { return }
+        guard snap != lastSnapshot else {
+            Log.controller.debug(
+                "eval_suppressed trig=\(trigger.rawValue, privacy: .public)",
+            )
+            return
+        }
         lastSnapshot = snap
 
-        menuBar.apply(shouldHide: snap.shouldHide)
-        logSnapshot(snap)
+        menuBar.apply(shouldHide: snap.decision.shouldHide)
+        logSnapshot(snap, trigger: trigger)
     }
 
     private func takeSnapshot() -> Snapshot {
@@ -178,7 +218,7 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   {HIDE|SHOW}  front=<head>[pid=…,name=…,bundle=…,fs=…,fsPid=…]
+    ///   {HIDE|SHOW(reason)}  trig=<src> front=<head>[pid=…,name=…,bundle=…,fs=…,fsPid=…]
     ///   np=<head>[pid=…,bundle=…,parent=…,resp=…,play=…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
@@ -187,39 +227,47 @@ final class Controller: NSObject {
     /// values with spaces are double-quoted so downstream
     /// space-tokenizing parsers see them as one field. Leading `\n`
     /// pushes the body onto its own row under the unified-log prefix.
-    private func logSnapshot(_ snap: Snapshot) {
-        Log.controller.info("\n\(Self.formatSnapshot(snap), privacy: .public)")
+    private func logSnapshot(_ snap: Snapshot, trigger: EvalTrigger) {
+        Log.controller.info(
+            "\n\(Self.formatSnapshot(snap, trigger: trigger), privacy: .public)",
+        )
     }
 
-    private static func formatSnapshot(_ snap: Snapshot) -> String {
-        let decision = snap.shouldHide ? "HIDE" : "SHOW"
+    private static func formatSnapshot(_ snap: Snapshot, trigger: EvalTrigger) -> String {
         // Two lines because the single-line form wrapped on most
         // terminals once full bundles + parent + resp were included.
-        return "\(decision)  front=\(formatFront(snap))\nnp=\(formatNowPlaying(snap))"
+        """
+        \(snap.decision.tag)  trig=\(trigger.rawValue) front=\(formatFront(snap))
+        np=\(formatNowPlaying(snap))
+        """
+    }
+
+    private static func formatFrontChange(_ app: NSRunningApplication?) -> String {
+        let pid = formatNullable(app?.processIdentifier)
+        let bundle = formatNullableString(app?.bundleIdentifier)
+        let name = quoteString(app?.localizedName ?? "(unknown)")
+        return "front_change pid=\(pid) bundle=\(bundle) name=\(name)"
     }
 
     private static func formatFront(_ snap: Snapshot) -> String {
         let head = bundleShort(snap.frontBundle) ?? ""
-        let fields = [
-            "pid=\(formatNullable(snap.frontPID?.rawValue))",
-            "name=\(quoteString(snap.frontName))",
-            "bundle=\(formatNullableString(snap.frontBundle))",
-            "fs=\(snap.dockFs.isFullScreen ? "yes" : "no")",
-            "fsPid=\(formatNullable(snap.dockFs.pid))",
-        ]
-        return "\(head)[\(fields.joined(separator: ","))]"
+        let pid = formatNullable(snap.frontPID?.rawValue)
+        let name = quoteString(snap.frontName)
+        let bundle = formatNullableString(snap.frontBundle)
+        let resp = formatNullable(snap.frontPID?.responsiblePID)
+        let fs = snap.dockFs.isFullScreen ? "yes" : "no"
+        let fsPid = formatNullable(snap.dockFs.pid)
+        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
         let head = bundleShort(snap.nowPlayingBundle) ?? ""
-        let fields = [
-            "pid=\(formatNullable(snap.nowPlayingPID?.rawValue))",
-            "bundle=\(formatNullableString(snap.nowPlayingBundle))",
-            "parent=\(formatNullableString(snap.nowPlayingParentBundle))",
-            "resp=\(formatNullable(snap.nowPlayingPID?.responsiblePID))",
-            "play=\(snap.isPlaying ? "yes" : "no")",
-        ]
-        return "\(head)[\(fields.joined(separator: ","))]"
+        let pid = formatNullable(snap.nowPlayingPID?.rawValue)
+        let bundle = formatNullableString(snap.nowPlayingBundle)
+        let parent = formatNullableString(snap.nowPlayingParentBundle)
+        let resp = formatNullable(snap.nowPlayingPID?.responsiblePID)
+        let play = snap.isPlaying ? "yes" : "no"
+        return "\(head)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play)]"
     }
 
     /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →
