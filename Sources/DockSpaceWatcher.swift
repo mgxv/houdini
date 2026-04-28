@@ -1,27 +1,13 @@
-// Subscribes to Dock's `dock-visibility` log channel as an external
-// IPC channel for fullscreen-Space state. Cross-process traces show
-// that Dock emits a `Space Forces Hidden:` line on every Space
-// transition (engage and exit alike) that contains, in plain text:
+// Subscribes to Dock's `dock-visibility` log channel as our source
+// of fullscreen-Space state. We use Dock's log instead of querying
+// Accessibility because on macOS 15+ AX notifications are flaky
+// during FS animations and `AXFullScreen` is set asynchronously by
+// the app — sometimes hundreds of ms after Dock declares the
+// animation complete. Reading from Dock's log eliminates the race
+// because Dock emits at decision time.
 //
-//   - `fullscreen=true|false`  — whether the new active Space is FS
-//   - `pid=NNNNN`              — the FS app's PID (engage only)
-//
-// We use these as the canonical source of fullscreen-state truth
-// instead of querying Accessibility, which on macOS 15+ is unreliable
-// in two distinct ways: AX notifications are flaky during FS
-// animations, and the focused window's `AXFullScreen` attribute is
-// set asynchronously by the app — sometimes hundreds of milliseconds
-// after Dock declares the animation complete. Reading from Dock's own
-// log eliminates that race because Dock emits the line at the moment
-// it makes the decision.
-//
-// We tap the channel by spawning `/usr/bin/log stream` with a
-// predicate scoped to the dock-visibility category and filtered to the
-// "Space Forces Hidden:" message we care about. Each parsed line
-// surfaces as a `DockFullScreenState` event to the controller.
-//
-// `log stream` is a public, documented command. No private API or
-// special entitlements are required.
+// `log stream` is a public, documented command — no entitlements
+// required.
 
 import Foundation
 
@@ -34,13 +20,10 @@ struct DockFullScreenState: Equatable {
     let isFullScreen: Bool
     let pid: pid_t?
 
-    /// Default state assumed before any Dock event has arrived — the
-    /// daemon starts here at boot. If the user is *already* in a
-    /// fullscreen Space when the daemon launches, this snapshot is
-    /// wrong (we report `isFullScreen=false` until the next Space
-    /// transition). The failure mode is benign: the menu bar stays
-    /// visible until the user toggles or switches Spaces, at which
-    /// point Dock emits a fresh log line that corrects us.
+    /// Default until any Dock event arrives. If the user is
+    /// *already* in a fullscreen Space when the daemon launches, we
+    /// report `isFullScreen=false` until the next Space transition
+    /// corrects us — menu bar stays visible until then.
     static let initial = DockFullScreenState(isFullScreen: false, pid: nil)
 }
 
@@ -68,22 +51,15 @@ final class DockSpaceWatcher {
     private var subprocess: Process?
     private var lineBuffer = LineBuffer()
     /// Set by `stop()` so the termination handler can distinguish
-    /// graceful shutdown (we asked the subprocess to terminate) from
-    /// an unexpected exit (which is fatal — see termination handler).
+    /// graceful shutdown from unexpected exit (fatal).
     private var stopping = false
 
     init(onUpdate: @escaping @MainActor (DockSpaceEvent) -> Void) {
         self.onUpdate = onUpdate
     }
 
-    /// Idempotent — calling start multiple times after the first is
-    /// a no-op.
-    ///
-    /// Throws if the subprocess fails to spawn. The Dock channel is
-    /// load-bearing for the entire daemon (without it we have no
-    /// fullscreen-state signal at all), so the caller is expected to
-    /// `die` rather than swallow — same fail-fast policy as
-    /// `AdapterClient.start()`.
+    /// Idempotent. Throws on spawn failure — the Dock channel is
+    /// load-bearing, so the caller is expected to `die`.
     func start() throws {
         guard subprocess == nil else { return }
 
@@ -96,21 +72,14 @@ final class DockSpaceWatcher {
             "--predicate", Self.logPredicate,
         ]
 
-        // `log stream` writes its filter-confirmation header
-        // ("Filtering the log data using …") to *stdout*, so it lands
-        // in our pipe at startup. The header doesn't match our parser
-        // (no "fullscreen=true|false" token), so it's silently dropped
-        // without a state update. `standardError` is silenced as
-        // belt-and-suspenders against any unrelated runtime noise.
-        // `Process` retains the pipe via `standardOutput`, so we don't
-        // store it ourselves.
+        // `log stream` writes a "Filtering the log data using …"
+        // header to stdout that doesn't match our parser, so it's
+        // silently dropped. `standardError` is silenced as
+        // belt-and-suspenders.
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
-        // `readabilityHandler` is a `@Sendable` Swift closure invoked
-        // on a background queue, so we can capture `[weak self]`
-        // directly and hop to the main actor before touching state.
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
@@ -121,14 +90,9 @@ final class DockSpaceWatcher {
             }
         }
 
-        // Unexpected subprocess exit is fatal — the daemon would lose
-        // its only fullscreen-state signal, and degraded operation
-        // (always SHOW) is worse than a launchd-orchestrated restart.
-        // Capture the scalar status synchronously so the Process
-        // reference doesn't cross into the @MainActor task closure.
-        // The `stopping` check distinguishes this from graceful
-        // shutdown (where `stop()` terminated the subprocess on
-        // purpose).
+        // Unexpected exit is fatal — degraded operation (always SHOW)
+        // is worse than a launchd-orchestrated restart. The
+        // `stopping` check distinguishes graceful shutdown.
         process.terminationHandler = { [weak self] proc in
             let status = proc.terminationStatus
             Task { @MainActor in
@@ -144,13 +108,9 @@ final class DockSpaceWatcher {
         subprocess = process
     }
 
-    /// Mark the watcher as gracefully stopping and terminate the
-    /// subprocess. Called from the daemon's signal handler before
-    /// `exit(0)` so the termination handler doesn't race the shutdown
-    /// and call `die`. After `stop()` returns, the termination
-    /// handler may still fire on a background queue, but the
-    /// `stopping` flag (set synchronously here on the main actor)
-    /// suppresses the fatal path.
+    /// Sets the `stopping` flag synchronously before `terminate()`
+    /// so the termination handler observes it and skips the fatal
+    /// unexpected-exit path.
     func stop() {
         stopping = true
         if let subprocess, subprocess.isRunning {
@@ -158,10 +118,6 @@ final class DockSpaceWatcher {
         }
     }
 
-    /// Drain complete lines from the buffer, parse each, and forward
-    /// recognised events to the controller. Non-matching lines (the
-    /// filter header, possible private-redacted variants) are silently
-    /// dropped.
     private func ingest(_ chunk: Data) {
         lineBuffer.ingest(chunk) { line in
             guard let text = String(data: line, encoding: .utf8) else { return }
@@ -203,11 +159,9 @@ final class DockSpaceWatcher {
             return nil
         }
 
-        // `\b` (word boundary) prevents matching the `pid=` suffix of
-        // `spid=…` if Dock ever switches the space-id field's
-        // separator from `:` to `=`. Today's traces use
-        // `space=CGSSpace(spid: N)` (colon), so `pid=\d+` would also
-        // be correct — the word boundary is purely defensive.
+        // `\b` prevents matching the `pid=` suffix of `spid=…` if
+        // Dock ever switches the space-id separator from `:` to `=`.
+        // Defensive — today's traces use `(spid: N)`.
         var pid: pid_t?
         if let match = line.range(of: #"\bpid=\d+"#, options: .regularExpression) {
             let digits = line[match].dropFirst("pid=".count)

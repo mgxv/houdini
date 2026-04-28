@@ -1,17 +1,13 @@
-// Per-user single-instance lock for the daemon. `flock` on a file in
-// Application Support guarantees at most one running daemon per user.
-// The kernel releases the lock when the process exits — including
-// SIGKILL and panic — so there's no stale-state cleanup on crash.
-//
-// Application Support, rather than Caches or /tmp, because cleaning
-// utilities routinely purge cache-style locations and a deleted lock
-// file lets a second daemon start up on a fresh inode.
+// Per-user single-instance lock. `flock` on a file in Application
+// Support — kernel releases on any exit (including SIGKILL/panic),
+// so no stale-state cleanup on crash. Application Support rather
+// than Caches/tmp because cleaning utilities purge those, and a
+// deleted lock file lets a second daemon start on a fresh inode.
 
 import Darwin
 import Foundation
 
-/// Absolute URL of the lock file. Does not create anything on disk —
-/// safe to call from read-only paths like `probeDaemonRunning`.
+/// Read-only — safe from `probeDaemonRunning`.
 private func instanceLockURL() -> URL {
     let fm = FileManager.default
     let appSupport = (try? fm.url(
@@ -26,11 +22,8 @@ private func instanceLockURL() -> URL {
         .appendingPathComponent("instance.lock")
 }
 
-/// Acquires the exclusive per-user lock, or dies with a clear message
-/// if another daemon is already running. The returned file descriptor
-/// is intentionally leaked — the lock lives for the lifetime of the
-/// process, and closing would release it. Call exactly once, at the
-/// top of `runForeground`.
+/// Dies if another daemon is already running. The fd is
+/// intentionally leaked — closing would release the lock.
 @MainActor
 func acquireInstanceLock() {
     let url = instanceLockURL()
@@ -59,9 +52,8 @@ func acquireInstanceLock() {
     }
 }
 
-/// Side-effect-free probe: is a daemon currently holding the lock?
-/// Returns false if the lock file doesn't exist yet (no daemon has
-/// ever run on this user account). Used by `status`.
+/// Side-effect-free probe used by `status`. Returns false if the
+/// lock file doesn't exist yet (no daemon has run on this account).
 func probeDaemonRunning() -> Bool {
     let path = instanceLockURL().path
     guard FileManager.default.fileExists(atPath: path) else { return false }

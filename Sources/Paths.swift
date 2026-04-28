@@ -3,12 +3,8 @@
 
 import Foundation
 
-/// Filesystem paths the daemon needs at runtime, resolved by
-/// `locateArtifacts()`.
 struct AdapterArtifacts {
-    /// Absolute path to `mediaremote-adapter.pl`.
     let scriptPath: String
-    /// Absolute path to `MediaRemoteAdapter.framework`.
     let frameworkPath: String
 }
 
@@ -26,9 +22,8 @@ func locateArtifacts() -> AdapterArtifacts {
     guard let exec = Bundle.main.executableURL else {
         die("could not determine binary path (Bundle.main.executableURL is nil)")
     }
-    // Resolve symlinks so that invocations through Homebrew's
-    // /opt/homebrew/bin/houdini shim land inside the Cellar keg, where
-    // the sibling libexec/houdini/ actually lives.
+    // Resolve symlinks so Homebrew's /opt/homebrew/bin/houdini shim
+    // lands inside the Cellar keg, where libexec/houdini/ lives.
     let binDir = exec.resolvingSymlinksInPath().deletingLastPathComponent()
 
     var candidates: [URL] = []

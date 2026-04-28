@@ -1,26 +1,21 @@
-// A line-oriented buffer for output from a subprocess pipe. Accumulates
-// byte chunks and drains complete (newline-terminated) lines to a
-// handler. The buffer grows unboundedly on purpose — the caller is
-// expected to check `pendingBytes` after each `ingest` and fail fatally
-// if a line has grown past whatever cap is appropriate for that stream.
-// Keeping the cap policy in the caller lets different streams pick
-// different limits without the buffer carrying the state machine.
+// Accumulates byte chunks from a subprocess pipe, drains complete
+// (newline-terminated) lines to a handler. Grows unboundedly on
+// purpose — callers check `pendingBytes` and fail fatally on
+// overflow per-stream policy.
 
 import Foundation
 
 struct LineBuffer {
     private var data = Data()
 
-    /// Bytes accumulated for the current (not-yet-terminated) line.
-    /// Callers check this to enforce a per-stream size cap.
+    /// Bytes in the current (not-yet-terminated) line. Callers
+    /// check this to enforce a per-stream size cap.
     var pendingBytes: Int {
         data.count
     }
 
-    /// Scans the buffer once, emitting each complete line to `handler`,
-    /// and drops the consumed prefix with a single `removeSubrange` at
-    /// the end. Keeps total cost O(N) in the buffer size, instead of
-    /// O(k·N) for a per-line remove loop.
+    /// Single scan + single `removeSubrange` keeps total cost O(N)
+    /// in buffer size, vs. O(k·N) for a per-line remove loop.
     mutating func ingest(_ chunk: Data, handler: (Data) -> Void) {
         data.append(chunk)
         var lineStart = data.startIndex

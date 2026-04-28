@@ -18,12 +18,10 @@ func runForeground() {
 
     let controller = Controller(menuBar: menuBar)
 
-    // Seed the controller with a one-shot Now Playing snapshot before
-    // starting it, so the first logged evaluation reflects the real
-    // current state rather than a blank "(no Now Playing source)"
-    // placeholder from before the streaming adapter delivers its first
-    // event. If the one-shot fails, we skip priming — not worth
-    // aborting startup over.
+    // Prime with a one-shot Now Playing fetch so the first logged
+    // evaluation reflects current state, not a blank placeholder
+    // from before the streaming adapter delivers its first event.
+    // Skip on failure — not worth aborting startup over.
     if let snapshot = fetchNowPlayingOnce(artifacts: artifacts) {
         controller.updateMedia(snapshot)
     }
@@ -67,10 +65,9 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
         signal(sig, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
         src.setEventHandler {
-            // The source is queued on .main, so this handler runs on the
-            // main thread — but DispatchSource's event handler isn't
-            // statically main-actor-isolated. Assume the isolation so we
-            // can call @MainActor APIs synchronously before exit().
+            // Source is queued on .main, but DispatchSource's handler
+            // isn't statically main-actor-isolated — assume isolation
+            // so we can call @MainActor APIs before exit().
             MainActor.assumeIsolated {
                 Log.general.notice("houdini \(version, privacy: .public) stopping")
                 print("\nhoudini \(version) stopping…")
@@ -105,12 +102,9 @@ func runVersion() -> Never {
 
 // MARK: - logs
 
-/// Streams every houdini unified-log entry by shelling out to
-/// `/usr/bin/log stream`. Always at `--level debug` and across every
-/// category, so a single command surfaces everything we'd want for a
-/// repro — controller HIDE/SHOW snapshots, dock-visibility events,
-/// mediaremote-adapter subprocess output, and startup/shutdown
-/// notices. For history, use `log show` with the same predicate.
+/// Streams every houdini unified-log entry across every category at
+/// `--level debug` — one command surfaces everything for a repro.
+/// For history, use `log show` with the same predicate.
 @MainActor
 func runLogs(args: [String]) -> Never {
     if !args.isEmpty {
@@ -128,21 +122,15 @@ func runLogs(args: [String]) -> Never {
         "--style", "compact",
     ]
 
-    // Ctrl-C sends SIGINT to the whole foreground process group, but
-    // `/usr/bin/log stream` doesn't always exit cleanly on it — leaving
-    // an orphan still attached to the tty, writing log lines between
-    // future shell prompts. Install handlers on a background queue (the
-    // main thread is about to block in waitUntilExit, so a .main-queued
-    // source would never fire) that explicitly terminate the child;
-    // waitUntilExit then returns and we exit with its status.
+    // `/usr/bin/log stream` doesn't always exit cleanly on SIGINT,
+    // leaving an orphan attached to the tty. Handlers on a
+    // background queue (main is about to block in waitUntilExit)
+    // explicitly terminate the child.
     //
-    // The event-handler closure is hoisted into its own explicitly-
-    // typed `@Sendable () -> Void` binding so it does NOT inherit
-    // `@MainActor` from the enclosing `runLogs` function. Without that,
-    // Swift 6's runtime isolation check traps with SIGTRAP when the
-    // handler fires on `.global()` (the assert is "I should be on main
-    // but I'm on default-qos"). `proc` is Sendable on macOS 15+, so
-    // capturing it in a non-isolated @Sendable closure is legitimate.
+    // The closure is hoisted into a `@Sendable () -> Void` so it
+    // does NOT inherit `@MainActor` from `runLogs` — Swift 6's
+    // runtime isolation check traps with SIGTRAP otherwise when
+    // the handler fires on `.global()`.
     let onSignal: @Sendable () -> Void = {
         if proc.isRunning { proc.terminate() }
     }

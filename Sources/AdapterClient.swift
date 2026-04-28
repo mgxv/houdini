@@ -1,53 +1,33 @@
-// `AdapterClient` spawns `/usr/bin/perl …/mediaremote-adapter.pl
-// stream` (perl is on Apple's MediaRemote allowlist; an unentitled
-// Swift binary isn't) and parses the newline-delimited JSON it
-// streams to stdout. Each "data" event is handed to the controller on
-// the main actor. Anything the subprocess writes to stderr is
-// forwarded line-by-line to the unified log under the "adapter"
-// category, so it's distinguishable from houdini's own warnings
-// without needing a stream-specific prefix.
+// Spawns `/usr/bin/perl mediaremote-adapter.pl stream` (perl is on
+// Apple's MediaRemote allowlist; an unentitled Swift binary isn't)
+// and parses the newline-delimited JSON it streams. Stderr is
+// forwarded to the unified log under the "adapter" category.
 //
-// The client is an `actor`: Foundation delivers `terminationHandler`
-// and `readabilityHandler` callbacks on its own background queues, and
-// those callbacks hop into the actor via `Task { await self?.… }`
-// before touching the line buffers. `start()` and `stop()` are
-// `nonisolated` so the @MainActor `runForeground` and its SIGINT/
-// SIGTERM signal handler can invoke them synchronously without an
-// `await`. The `UpdateHandler` callback is `@Sendable @MainActor`, so
-// every decision-affecting event reaches the controller on main.
+// `actor` so Foundation's background-queue callbacks can hop in via
+// `Task { await … }` before touching the line buffers. `start()` and
+// `stop()` are `nonisolated` so signal handlers can invoke them
+// synchronously.
 //
-// The shutdown flag is held in an `OSAllocatedUnfairLock` rather than
-// in actor-isolated state so `stop()` can set it synchronously before
-// `terminate()`. Were the flag actor-isolated, the only way to set it
-// from `nonisolated stop()` would be `Task { await markStopping() }`,
-// which can race the kernel signal — `handleTermination` would then
-// observe `stopping == false` during a clean Ctrl-C and call
-// `die(...)` for what is in fact a graceful shutdown.
+// `isStopping` is in an `OSAllocatedUnfairLock` rather than
+// actor-isolated state so `stop()` can set it synchronously before
+// `terminate()`. An actor-isolated flag set via `Task { await … }`
+// could race the kernel signal: `handleTermination` would then
+// observe `stopping == false` during a clean shutdown and `die(...)`
+// for what is graceful.
 //
-// Snapshot delivery to the controller is batched per chunk through a
-// single `await MainActor.run { … }`. The earlier per-snapshot
-// `Task { @MainActor in … }` pattern created one unstructured task
-// per event; under actor reentrancy (a second chunk arriving while
-// the first is mid-loop), tasks from the second chunk could be
-// enqueued on MainActor between two snapshots from the first, so the
-// controller observed events out of order. Batching collapses each
-// chunk into a single MainActor hop and preserves FIFO ordering
-// across chunks.
+// Snapshots are batched per chunk through a single
+// `await MainActor.run { … }`. Per-snapshot hops would interleave
+// snapshots across chunks under actor reentrancy; one hop per chunk
+// preserves FIFO order.
 //
-// `fetchNowPlayingOnce` at the bottom of the file runs the adapter in
-// one-shot `get` mode for the `status` subcommand; it's @MainActor
-// and blocks the caller until the subprocess exits.
+// `fetchNowPlayingOnce` at the bottom runs the adapter in one-shot
+// `get` mode for `status`.
 
 import Foundation
 import os
 
 actor AdapterClient {
-    /// Callback delivered on the main actor whenever the adapter emits
-    /// a `data` event. See `NowPlayingSnapshot` for field semantics —
-    /// in particular, `pid == nil` means nothing currently owns Now
-    /// Playing, and `parentBundle` is set for helper-process owners so
-    /// the controller's bundle-id identity check can match them to the
-    /// user-facing app.
+    /// Callback delivered on the main actor for each `data` event.
     typealias UpdateHandler = @Sendable @MainActor (NowPlayingSnapshot) -> Void
 
     /// Adapter `stream` flags:
@@ -72,9 +52,8 @@ actor AdapterClient {
     /// treatment but with a tighter cap.
     private static let stderrLineLimit = 64 * 1024
 
-    // Process and Pipe are declared Sendable by the Foundation SDK on
-    // macOS 15+, so the actor can hand them to Foundation's @Sendable
-    // terminationHandler / readabilityHandler closures without a wrapper.
+    // Process and Pipe are Sendable on macOS 15+, so the actor can
+    // hand them to Foundation's @Sendable callbacks unwrapped.
     private let process = Process()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
@@ -91,16 +70,10 @@ actor AdapterClient {
         process.standardError = stderrPipe
     }
 
-    /// `nonisolated` so callers (the @MainActor `runForeground`) can
-    /// invoke it synchronously without an `await` hop. Only touches
-    /// `Sendable` state (process, pipes) directly; the Foundation-
-    /// delivered callbacks defer actor-isolated work via
-    /// `Task { await self?.… }`.
     nonisolated func start() throws {
         process.terminationHandler = { [weak self] proc in
             // Capture the scalar status synchronously so the Process
-            // reference itself doesn't cross into the Task closure;
-            // the shutdown flag is checked after the actor hop.
+            // reference doesn't cross into the Task closure.
             let status = proc.terminationStatus
             Task { await self?.handleTermination(status: status) }
         }
@@ -115,13 +88,8 @@ actor AdapterClient {
         try process.run()
     }
 
-    /// Terminates the subprocess. `nonisolated` because signal handlers
-    /// call this synchronously during shutdown and can't `await`;
-    /// `Process.terminate()` is thread-safe per Foundation docs. The
-    /// shutdown flag is set *before* `terminate()` so that even if the
-    /// kernel signal lands and `terminationHandler` fires immediately,
-    /// `handleTermination` will observe `stopping == true` and skip
-    /// the `die("unexpected exit…")` path.
+    /// Sets `isStopping` *before* `terminate()` so a fast termination
+    /// handler observes the flag and skips the unexpected-exit path.
     nonisolated func stop() {
         isStopping.withLock { $0 = true }
         if process.isRunning { process.terminate() }
@@ -134,18 +102,10 @@ actor AdapterClient {
         }
     }
 
-    /// Accumulates a stdout chunk, parses every complete (newline-
-    /// terminated) line into a snapshot, and delivers all snapshots
-    /// from this chunk to the controller in a single `MainActor.run`
-    /// hop. The single hop is what preserves ordering: an actor can
-    /// be re-entered while suspended on `await`, so per-snapshot hops
-    /// risk interleaving snapshots from a later chunk between two
-    /// snapshots from an earlier one. Batching collapses the chunk
-    /// into one atomic delivery, and chunks themselves reach the
-    /// actor in submission order, so MainActor sees snapshots in the
-    /// same order the adapter emitted them. If an in-progress line
-    /// exceeds the cap, the subprocess is malfunctioning — `die` and
-    /// let launchd restart us.
+    /// Delivers all snapshots from this chunk in a single
+    /// `MainActor.run` hop — the atomic per-chunk delivery is what
+    /// preserves cross-chunk FIFO order under actor reentrancy.
+    /// Overflowing the line cap is fatal; launchd restarts.
     private func ingestStdout(_ chunk: Data) async {
         var snapshots: [NowPlayingSnapshot] = []
         stdoutBuffer.ingest(chunk) { line in
@@ -170,10 +130,8 @@ actor AdapterClient {
         }
     }
 
-    /// Accumulates a stderr chunk and forwards each complete line to
-    /// the unified log under the "adapter" category at `.debug` level.
-    /// Surfaces in `houdini logs` (which streams the whole subsystem at
-    /// debug). Same fatal-on-overflow policy as stdout.
+    /// Forwards each complete stderr line to the "adapter" log
+    /// category at `.debug`. Same fatal-on-overflow policy as stdout.
     private func ingestStderr(_ chunk: Data) {
         stderrBuffer.ingest(chunk) { line in
             let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
@@ -186,13 +144,11 @@ actor AdapterClient {
         }
     }
 
-    /// Decodes one stdout line into a snapshot, or returns nil for
-    /// blanks, non-`data` envelopes, and undecodable input. Decode
-    /// errors emit a `warn` via a detached MainActor task; the line is
-    /// then dropped so a single bad event doesn't stall the stream.
-    /// Pure-by-design except for that warn — the snapshot dispatch
-    /// itself happens in `ingestStdout` after the whole chunk is
-    /// parsed, so ordering is preserved.
+    /// Returns nil for blanks, non-`data` envelopes, and undecodable
+    /// input. Decode errors `warn` and drop the line so a single bad
+    /// event doesn't stall the stream; snapshot dispatch happens in
+    /// `ingestStdout` after the whole chunk is parsed, so ordering
+    /// is preserved.
     private func parseStdoutLine(_ line: Data) -> NowPlayingSnapshot? {
         guard !line.isEmpty else { return nil }
 
@@ -211,8 +167,7 @@ actor AdapterClient {
         return event.payload ?? .empty
     }
 
-    /// Shared decoder. Stateless once configured; reusing avoids
-    /// per-line allocation churn.
+    /// Shared to avoid per-line allocation churn.
     private static let decoder = JSONDecoder()
 }
 
@@ -228,8 +183,8 @@ struct NowPlayingSnapshot {
     let parentBundle: String?
 
     /// All-nil sentinel for "nothing is playing." Returned for
-    /// `get`-mode `null`/empty output and for `stream`-mode `data`
-    /// events whose `payload` is null or missing.
+    /// `get`-mode `null`/empty output and `stream`-mode `data`
+    /// events with a null/missing payload.
     static let empty = NowPlayingSnapshot(
         playing: false,
         pid: nil,
@@ -273,17 +228,14 @@ struct NowPlayingStreamEvent: Decodable {
     let payload: NowPlayingSnapshot?
 }
 
-/// Synchronously invokes `mediaremote-adapter.pl get` and parses the
-/// result. Blocks the calling thread until the adapter exits. Intended
-/// for the `status` subcommand; the daemon uses the streaming
-/// `AdapterClient` instead.
+/// Synchronous one-shot `mediaremote-adapter.pl get` for the
+/// `status` subcommand. Blocks until the subprocess exits.
 ///
-/// Note: `get` emits the raw payload dict (or the literal JSON `null`),
-/// not the `{type, payload}` envelope that `stream` uses.
+/// `get` emits the raw payload dict (or JSON `null`), not the
+/// `{type, payload}` envelope that `stream` uses.
 ///
-/// Returns nil on spawn or parse failure (a `warn()` is emitted first).
-/// Returns a snapshot with all-nil fields when no app currently owns
-/// Now Playing.
+/// Returns nil on spawn or parse failure (after a `warn`).
+/// Returns `.empty` when nothing currently owns Now Playing.
 @MainActor
 func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     let process = Process()

@@ -1,11 +1,8 @@
-// Entry point. Dispatches the subcommand; all real work lives in the
-// command handlers in Commands.swift.
+// Entry point. Real work lives in Commands.swift.
 //
-// `MainActor.assumeIsolated` asserts (and to the compiler, *declares*)
-// that top-level code here runs on the main thread. SwiftPM infers this
-// automatically for `main.swift` under the Swift 6 language mode, but
-// scripts/build.sh invokes swiftc directly without that inference, so
-// the wrap is required for both build paths to compile.
+// `MainActor.assumeIsolated` is required because scripts/build.sh
+// invokes swiftc directly without SwiftPM's inference of
+// `@MainActor` for `main.swift` under the Swift 6 language mode.
 
 import Foundation
 

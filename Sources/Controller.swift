@@ -4,30 +4,20 @@
 
 import Cocoa
 
-/// Hide the menu bar iff Dock reports the active Space as fullscreen,
-/// the frontmost app is the FS app, *and* the frontmost app is the
-/// source of the current Now Playing track. Called once per evaluation
-/// tick via `Snapshot.shouldHide`.
-///
 /// `frontPID.rawValue == dockFs.pid` is the multi-display gate: if
-/// the user has FS Chrome on display 2 but is currently focused on a
-/// windowed app on display 1, we'd see `dockFs.isFullScreen=true,
-/// dockFs.pid=Chrome` from the most recent Dock event, but the front
-/// PID would not match, so we keep the menu bar visible. Only when
-/// the focused app is the FS app do we proceed to the same-app-as-
-/// Now-Playing identity check.
+/// FS Chrome is on display 2 but the user is focused on a windowed
+/// app on display 1, the front PID won't match the Dock-reported FS
+/// owner and we keep the menu bar visible.
 ///
-/// Two identity checks run in parallel for the "same app as Now
-/// Playing" test:
+/// The two identity checks for the same-app-as-Now-Playing test:
 ///   1. Responsibility-PID mapping via the kernel syscall
 ///      (`FrontmostPID.isSameProcess(as:)`), which handles helper
-///      processes (e.g. WebKit.GPU resolves to Safari) without
-///      adapter cooperation.
-///   2. The frontmost app's bundle identifier matches the Now Playing
-///      source's `parentApplicationBundleIdentifier`. Direct assertion
-///      from MediaRemote about who owns the media; keeps houdini
-///      working for browsers even if the responsibility syscall
-///      regresses.
+///      processes (WebKit.GPU resolves to Safari) without adapter
+///      cooperation.
+///   2. Frontmost bundle id matches Now Playing's
+///      `parentApplicationBundleIdentifier` — MediaRemote's direct
+///      assertion of the owning app, a fallback if the responsibility
+///      syscall regresses.
 func shouldHideMenuBar(
     dockFs: DockFullScreenState,
     isPlaying: Bool,
@@ -56,14 +46,10 @@ func shouldHideMenuBar(
 
 @MainActor
 final class Controller: NSObject {
-    /// Immutable view of the inputs that drive the hide/show decision.
-    /// `shouldHide` is derived — two snapshots compare equal iff every
-    /// input matches, so Equatable avoids redundant writes without
-    /// caching the decision itself.
-    ///
-    /// `frontPID` and `nowPlayingPID` are distinct types (not just
-    /// distinct values) so the compiler blocks accidentally swapping
-    /// them.
+    /// `shouldHide` is derived, so Equatable on the inputs alone
+    /// dedups redundant writes without caching the decision.
+    /// `frontPID` and `nowPlayingPID` are distinct types so the
+    /// compiler blocks accidental role swaps.
     private struct Snapshot: Equatable {
         let frontPID: FrontmostPID?
         let frontName: String
@@ -103,9 +89,8 @@ final class Controller: NSObject {
         super.init()
     }
 
-    /// Throws if the dock-space watcher fails to spawn — that channel
-    /// is load-bearing for fullscreen detection, so the caller dies
-    /// rather than continuing in a degraded state.
+    /// Throws if the dock-space watcher can't spawn — that channel
+    /// is load-bearing, so the caller is expected to `die`.
     func start() throws {
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -117,10 +102,8 @@ final class Controller: NSObject {
         evaluate()
     }
 
-    /// Tear down the dock-space watcher's subprocess. Called from the
-    /// daemon's signal handler so unexpected-exit detection in the
-    /// termination handler doesn't fire `die` during graceful
-    /// shutdown.
+    /// Called from the daemon's signal handler so the watcher's
+    /// termination handler doesn't `die` on graceful shutdown.
     func stop() {
         dockSpaceWatcher.stop()
     }
@@ -129,8 +112,6 @@ final class Controller: NSObject {
         evaluate()
     }
 
-    /// Called by AdapterClient whenever the Now Playing state changes,
-    /// and once at startup from the priming `fetchNowPlayingOnce` call.
     func updateMedia(_ snapshot: NowPlayingSnapshot) {
         isPlaying = snapshot.playing
         nowPlayingPID = snapshot.pid
@@ -153,13 +134,13 @@ final class Controller: NSObject {
         evaluate()
     }
 
-    /// Refreshes `dockFs.pid` from `frontmostApplication` so
-    /// `shouldHideMenuBar`'s multi-display gate doesn't reject FS↔FS
-    /// hops with a stale pid. Guarded on cached `isFullScreen` because
-    /// the no-op fires for non-FS hops too; the line's `state` field
-    /// is unreliable across transition phases, so we trust the cache.
-    /// `frontmostApplication` is fresh here — the log subprocess
-    /// pipeline serializes after AppKit propagates the new frontmost.
+    /// Refreshes `dockFs.pid` so the multi-display gate doesn't
+    /// reject FS↔FS hops with a stale pid. Guarded on cached
+    /// `isFullScreen` because the no-op fires for non-FS hops too;
+    /// the line's `state` field is unreliable across transition
+    /// phases. `frontmostApplication` is fresh here — the log
+    /// subprocess pipeline serializes after AppKit propagates the
+    /// new frontmost.
     private func onStaySpaceChange() {
         guard dockFs.isFullScreen,
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -177,8 +158,6 @@ final class Controller: NSObject {
         logSnapshot(snap)
     }
 
-    /// Sample the frontmost app and combine with the cached Now
-    /// Playing and Dock-FS state into an immutable snapshot.
     private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
@@ -197,41 +176,25 @@ final class Controller: NSObject {
         )
     }
 
-    /// Renders the snapshot as two scannable lines for the unified log:
-    /// decision + frontmost on the first row, Now Playing on the second.
-    /// Format:
+    /// Two scannable lines for the unified log:
     ///
-    ///   {HIDE|SHOW}  front=<head>[pid=<pid>,name=<name>,bundle=<bundle>,fs=<yes|no>,fsPid=<pid>]
-    ///   np=<head>[pid=<pid>,bundle=<bundle>,parent=<parent>,resp=<resp>,play=<yes|no>]
+    ///   {HIDE|SHOW}  front=<head>[pid=…,name=…,bundle=…,fs=…,fsPid=…]
+    ///   np=<head>[pid=…,bundle=…,parent=…,resp=…,play=…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
-    /// `WebKit.GPU`) — a cheap visual anchor for scanning. Empty when
-    /// the bundle is nil. The bracketed body emits every original
-    /// field; missing optionals are explicit `null` (so absent vs.
-    /// empty stays distinguishable from the log alone). String values
-    /// with spaces are double-quoted so a downstream space-tokenizing
-    /// parser sees them as one field.
-    ///
-    /// `fs` is the dock-reported fullscreen state of the active Space;
-    /// `fsPid` is the FS app's PID from the same Dock event, or `null`
-    /// when not fullscreen.
-    ///
-    /// Example:
-    ///   HIDE  front=Safari[pid=37860,name="Safari",bundle=com.apple.Safari,fs=yes,fsPid=37860]
-    ///   np=WebKit.GPU[pid=37865,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=37860,play=yes]
-    ///
-    /// Leading `\n` pushes the body onto its own row under the
-    /// unified-log timestamp/category prefix.
+    /// `WebKit.GPU`) — a visual anchor for scanning. Missing
+    /// optionals render as `null` (preserving absent-vs-empty);
+    /// values with spaces are double-quoted so downstream
+    /// space-tokenizing parsers see them as one field. Leading `\n`
+    /// pushes the body onto its own row under the unified-log prefix.
     private func logSnapshot(_ snap: Snapshot) {
         Log.controller.info("\n\(Self.formatSnapshot(snap), privacy: .public)")
     }
 
     private static func formatSnapshot(_ snap: Snapshot) -> String {
         let decision = snap.shouldHide ? "HIDE" : "SHOW"
-        // Decision + front on one line, np on the next. Long lines (full
-        // bundles, parent, resp) made the single-line form wrap on most
-        // terminals; splitting keeps each half readable without dropping
-        // any fields.
+        // Two lines because the single-line form wrapped on most
+        // terminals once full bundles + parent + resp were included.
         return "\(decision)  front=\(formatFront(snap))\nnp=\(formatNowPlaying(snap))"
     }
 
@@ -260,9 +223,8 @@ final class Controller: NSObject {
     }
 
     /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →
-    /// `WebKit.GPU`. Trims the reverse-DNS prefix and keeps the
-    /// app-identifying tail. Returns nil for nil/empty input so the
-    /// caller can omit the head entirely.
+    /// `WebKit.GPU`. Returns nil for nil/empty so the caller can
+    /// omit the head.
     private static func bundleShort(_ bundle: String?) -> String? {
         guard let bundle, !bundle.isEmpty else { return nil }
         let parts = bundle.split(separator: ".")
@@ -271,23 +233,17 @@ final class Controller: NSObject {
             : bundle
     }
 
-    /// pid_t nil → "null"; non-nil → its decimal representation.
-    /// Specialized to pid_t (the only nullable numeric we log) so
-    /// interpolation goes through Int32's direct path rather than
-    /// `String(describing:)`'s reflection-based fallback.
+    /// Specialized to pid_t so interpolation goes through Int32's
+    /// direct path rather than `String(describing:)`'s reflection
+    /// fallback.
     private static func formatNullable(_ value: pid_t?) -> String {
         value.map { "\($0)" } ?? "null"
     }
 
-    /// Three-state string formatting: nil → `null`, empty → `""`,
-    /// value with a space → double-quoted, value without a space →
-    /// bare. Bundles (reverse-DNS) hit the bare path; localized names
-    /// like "Google Chrome" are quoted. The nil vs empty distinction
-    /// is preserved so a reader can tell "field absent" from "field
-    /// present but empty" — the underlying optionals can mean
-    /// genuinely different things (e.g. a nil parentBundle is "no
-    /// helper relationship," an empty string is "MediaRemote reported
-    /// the field as empty.").
+    /// Distinguishes nil (`null`) from empty (`""`) so the log
+    /// preserves "field absent" vs. "MediaRemote reported the field
+    /// as empty" — the underlying optionals mean genuinely different
+    /// things (e.g. a nil parentBundle is "no helper relationship").
     private static func formatNullableString(_ value: String?) -> String {
         guard let value else { return "null" }
         return value.contains(" ") || value.isEmpty
@@ -295,8 +251,8 @@ final class Controller: NSObject {
             : value
     }
 
-    /// Always quote — used for `name`, which is a free-form display
-    /// string that may contain spaces, parens, or LTR markers.
+    /// Always quote — `name` is a free-form display string that may
+    /// contain spaces, parens, or LTR markers.
     private static func quoteString(_ value: String) -> String {
         "\"\(value)\""
     }

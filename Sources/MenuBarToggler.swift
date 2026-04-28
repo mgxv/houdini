@@ -1,11 +1,10 @@
-// Writes the system "auto-hide menu bar in fullscreen" preference.
-// The pref's *visible* polarity is the inverse of our shouldHide
-// decision, so callers pass shouldHide and we invert.
+// Writes the "auto-hide menu bar in fullscreen" pref. Callers pass
+// `shouldHide`; the pref stores the inverted `visible` polarity.
 //
-// The pref write alone doesn't re-apply menu bar policy to a window
-// that is already fullscreen. ControlCenterSettings.appex posts this
-// same distributed notification right after writing, and SkyLight
-// (WindowServer) re-reads.
+// Writing alone doesn't re-apply policy to an already-fullscreen
+// window — the distributed notification is what tells SkyLight
+// (WindowServer) to re-read. ControlCenterSettings.appex does the
+// same after toggling the pref from System Settings.
 
 import Foundation
 
@@ -23,20 +22,18 @@ final class MenuBarToggler {
         write(visible: !shouldHide)
     }
 
-    /// Force always-visible. Used as startup baseline and on graceful
-    /// shutdown so the menu bar is never left hidden.
+    /// Used at startup and on graceful shutdown so the menu bar is
+    /// never left hidden.
     func resetToVisible() {
         write(visible: true)
     }
 
-    /// No dedup against a remembered "last written" value: caching it
-    /// in-process goes stale the moment the user toggles "Automatically
-    /// hide and show the menu bar in full screen" in System Settings,
-    /// after which we'd skip a write that's actually needed. The write
-    /// is cheap (microseconds in-process plus a single distributed
-    /// notification), and SkyLight no-ops a write that doesn't change
-    /// the stored value, so re-applying on every decision change is
-    /// the simplest correct option.
+    /// No in-process dedup: a cached "last written" value goes stale
+    /// the moment the user toggles "Automatically hide and show the
+    /// menu bar in full screen" in System Settings — we'd then skip
+    /// a write that's actually needed. SkyLight no-ops same-value
+    /// writes anyway, so re-applying every time is the simplest
+    /// correct option.
     private func write(visible: Bool) {
         CFPreferencesSetValue(
             Self.key, visible as CFBoolean,
