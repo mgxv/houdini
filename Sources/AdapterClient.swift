@@ -78,11 +78,11 @@ actor AdapterClient {
         process.standardError = stderrPipe
 
         let (outStream, outCont) = AsyncStream<Data>.makeStream(bufferingPolicy: .unbounded)
-        self.stdoutChunks = outStream
-        self.stdoutChunkContinuation = outCont
+        stdoutChunks = outStream
+        stdoutChunkContinuation = outCont
         let (errStream, errCont) = AsyncStream<Data>.makeStream(bufferingPolicy: .unbounded)
-        self.stderrChunks = errStream
-        self.stderrChunkContinuation = errCont
+        stderrChunks = errStream
+        stderrChunkContinuation = errCont
     }
 
     nonisolated func start() throws {
