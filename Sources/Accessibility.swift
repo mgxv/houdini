@@ -1,0 +1,229 @@
+// AX helper for window-level same-app refinement. Returns nil
+// whenever AX is unavailable; callers fall back to process-level.
+
+import ApplicationServices
+import Foundation
+
+/// Short action item emitted to the unified log when AX is missing
+/// or revoked. The verbose first-time setup explanation lives in the
+/// brew caveats (`Formula/houdini.rb`).
+let accessibilityPermissionMessage = """
+Accessibility permission required for window-level same-app refinement.
+Grant via: System Settings → Privacy & Security → Accessibility
+Then run: brew services restart houdini
+"""
+
+func isAccessibilityTrusted() -> Bool {
+    AXIsProcessTrusted()
+}
+
+@MainActor private var axPermissionLostReported = false
+
+@MainActor
+private func noteAXError(_ error: AXError) {
+    guard error == .apiDisabled, !axPermissionLostReported else { return }
+    axPermissionLostReported = true
+    warn(accessibilityPermissionMessage)
+}
+
+/// Private HIServices symbol that bridges an `AXUIElement` window
+/// to its `CGWindowID`. Lets us correlate AX windows with
+/// `CGWindowListCopyWindowInfo` entries (which only know CGIDs) so
+/// `visibleWindowTitle` can pick the on-screen window in z-order.
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(
+    _ element: AXUIElement,
+    _ windowID: UnsafeMutablePointer<CGWindowID>,
+) -> AXError
+
+/// Title of the topmost on-screen window for `pid` whose AX title is
+/// non-empty. CGWindowList is z-ordered front-to-back, so we walk
+/// down it and return the first match — needed because AX-focused
+/// window doesn't track Space swipes for the same app, and because
+/// in fullscreen mode some apps (Chrome) put a titleless helper
+/// window ahead of the actual content window in z-order.
+@MainActor
+func visibleWindowTitle(for pid: pid_t?) -> String? {
+    guard let pid, pid > 0 else { return nil }
+
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let infos = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+        as? [[String: Any]]
+    else { return nil }
+
+    let candidateIDs: [CGWindowID] = infos.compactMap { info in
+        guard let owner = info[kCGWindowOwnerPID as String] as? pid_t, owner == pid,
+              let id = info[kCGWindowNumber as String] as? CGWindowID
+        else { return nil }
+        return id
+    }
+    guard !candidateIDs.isEmpty else { return nil }
+
+    let app = AXUIElementCreateApplication(pid)
+    var windowsRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(
+        app, kAXWindowsAttribute as CFString, &windowsRef,
+    ) == .success, let windows = windowsRef as? [AXUIElement]
+    else { return nil }
+
+    for candidate in candidateIDs {
+        guard let window = windows.first(where: { window in
+            var cgID: CGWindowID = 0
+            return _AXUIElementGetWindow(window, &cgID) == .success && cgID == candidate
+        }) else { continue }
+
+        var titleRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            window, kAXTitleAttribute as CFString, &titleRef,
+        ) == .success,
+            let title = (titleRef as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !title.isEmpty
+        else { continue }
+        return title
+    }
+    return nil
+}
+
+/// Walks from any AX element up to its enclosing window and returns
+/// the window's AX title. If `element` is itself a window
+/// (`kAXWindowRole`), reads its title directly. Used to surface the
+/// containing window of an `AXObserver` callback element — AX
+/// callbacks often hand us the focused UI element rather than the
+/// window itself.
+@MainActor
+func windowTitle(forElement element: AXUIElement) -> String? {
+    var roleRef: AnyObject?
+    let isWindow = AXUIElementCopyAttributeValue(
+        element, kAXRoleAttribute as CFString, &roleRef,
+    ) == .success && (roleRef as? String) == (kAXWindowRole as String)
+
+    let window: AXUIElement
+    if isWindow {
+        window = element
+    } else {
+        var windowRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXWindowAttribute as CFString, &windowRef,
+        ) == .success, let windowRef else { return nil }
+        window = windowRef as! AXUIElement
+    }
+
+    var titleRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(
+        window, kAXTitleAttribute as CFString, &titleRef,
+    ) == .success else { return nil }
+    return (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Subscribes to focus and title changes for a target app via AX.
+/// Fires `onChange(notificationName, element)` on the main actor for
+/// each `kAXFocusedWindowChanged` / `kAXFocusedUIElementChanged` /
+/// `kAXTitleChanged` notification — title-changed is re-pointed to
+/// the focused window each time the focused window changes.
+///
+/// Silently no-ops when AX permission isn't granted (the underlying
+/// `AXObserverCreate` returns `.apiDisabled`); a single warning is
+/// emitted via `noteAXError`. Callers don't need to check
+/// `isAccessibilityTrusted()` themselves — it's safe to always
+/// `attach()` and rely on the watcher being a no-op if AX is off.
+@MainActor
+final class AXWatcher {
+    private var observer: AXObserver?
+    private var attachedPID: pid_t = 0
+    private var watchedWindow: AXUIElement?
+    private let onChange: @MainActor (String, AXUIElement) -> Void
+
+    init(onChange: @escaping @MainActor (String, AXUIElement) -> Void) {
+        self.onChange = onChange
+    }
+
+    func attach(pid: pid_t?) {
+        guard let pid, pid > 0 else { detach(); return }
+        guard pid != attachedPID else { return }
+        detach()
+
+        // Source is on the main runloop → callback fires on main;
+        // `assumeIsolated` asserts the invariant.
+        let callback: AXObserverCallback = { _, element, name, refcon in
+            guard let refcon else { return }
+            let notification = name as String
+            MainActor.assumeIsolated {
+                let me = Unmanaged<AXWatcher>.fromOpaque(refcon).takeUnretainedValue()
+                if notification == (kAXFocusedWindowChangedNotification as String) {
+                    me.refreshTitleSubscription(on: element)
+                }
+                me.onChange(notification, element)
+            }
+        }
+        var obs: AXObserver?
+        let status = AXObserverCreate(pid, callback, &obs)
+        guard status == .success, let obs else {
+            noteAXError(status)
+            return
+        }
+
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let appElement = AXUIElementCreateApplication(pid)
+        AXObserverAddNotification(
+            obs, appElement,
+            kAXFocusedWindowChangedNotification as CFString,
+            refcon,
+        )
+        AXObserverAddNotification(
+            obs, appElement,
+            kAXFocusedUIElementChangedNotification as CFString,
+            refcon,
+        )
+        CFRunLoopAddSource(
+            CFRunLoopGetMain(),
+            AXObserverGetRunLoopSource(obs),
+            .commonModes,
+        )
+
+        observer = obs
+        attachedPID = pid
+
+        // Initial title-changed subscription on the currently focused
+        // window — kAXFocusedWindowChangedNotification only fires on
+        // *changes*, so we'd miss the starting window without this.
+        var focusedRef: AnyObject?
+        if AXUIElementCopyAttributeValue(
+            appElement, kAXFocusedWindowAttribute as CFString, &focusedRef,
+        ) == .success, let focusedRef {
+            refreshTitleSubscription(on: focusedRef as! AXUIElement)
+        }
+    }
+
+    func detach() {
+        if let obs = observer, let watched = watchedWindow {
+            AXObserverRemoveNotification(
+                obs, watched, kAXTitleChangedNotification as CFString,
+            )
+        }
+        if let obs = observer {
+            CFRunLoopRemoveSource(
+                CFRunLoopGetMain(),
+                AXObserverGetRunLoopSource(obs),
+                .commonModes,
+            )
+        }
+        observer = nil
+        attachedPID = 0
+        watchedWindow = nil
+    }
+
+    private func refreshTitleSubscription(on window: AXUIElement) {
+        guard let obs = observer else { return }
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        if let old = watchedWindow {
+            AXObserverRemoveNotification(
+                obs, old, kAXTitleChangedNotification as CFString,
+            )
+        }
+        AXObserverAddNotification(
+            obs, window, kAXTitleChangedNotification as CFString, refcon,
+        )
+        watchedWindow = window
+    }
+}

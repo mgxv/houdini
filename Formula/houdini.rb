@@ -25,34 +25,54 @@ class Houdini < Formula
 
   def caveats
     <<~EOS
+      Accessibility permission
+      ---------------------------------------------------------------
+      houdini uses Accessibility to read the focused window's title
+      — distinguishes two windows of the same app (e.g. the playing
+      Chrome tab vs. a different fullscreen Chrome window). Without
+      it, the daemon falls back to process-level matching only.
+
+      Triggers (or re-triggers) the prompt — fresh install, after
+      revocation, or if the original was dismissed:
+
+          brew services restart houdini
+
       After upgrading
       ---------------------------------------------------------------
-      `brew upgrade houdini` installs the new binary on disk but
-      doesn't cycle the running daemon, so the old version stays
-      resident until you restart:
+      `brew upgrade` installs a freshly-signed binary that macOS
+      treats as a new Accessibility identity, and doesn't cycle the
+      running daemon. Restart to pick up both:
 
           brew services restart houdini
 
       How it works
       ---------------------------------------------------------------
       macOS doesn't expose "is media playing inside this window," so
-      houdini watches two signals independently:
+      houdini fuses four signals:
 
-        - which app is frontmost and in fullscreen, and
-        - which app owns the system Now Playing widget.
+        - Dock log       — fullscreen state + FS owner's pid
+        - AppKit         — frontmost app
+        - MediaRemote    — Now Playing (playing flag, pid, parent
+                           bundle, track title)
+        - Accessibility  — focused window's title (window-level
+                           refinement)
 
-      When those match and the app is actively playing, the menu bar
-      hides. Switching apps, exiting fullscreen, or pausing brings it
-      back. In practice: fullscreen YouTube, Netflix, Apple TV+, and
-      Spotify will hide the bar. Fullscreen Terminal won't.
+      The menu bar hides when a fullscreen Space is active, the
+      frontmost app owns it, that app is the Now Playing source,
+      and the focused window's title contains the playing track.
+      Switching apps, switching to a non-playing tab/window of the
+      same app, exiting fullscreen, or pausing brings it back. In
+      practice: fullscreen YouTube, Netflix, Apple TV+, and Spotify
+      hide the bar; fullscreen Terminal doesn't.
 
       Limitations
       ---------------------------------------------------------------
-      No tab-level granularity inside a single process. Fullscreen
-      Chrome with audio playing in one tab keeps the bar hidden even
-      when you switch to another tab within Chrome — houdini can't
-      see into the process to tell which tab is actually visible.
-      Rare in practice.
+      Window-level matching relies on the playing app putting the
+      track title in its window title — most browsers and the
+      system Music / Apple TV apps do. Without Accessibility
+      permission, the window-title check is skipped and the bar
+      hides as soon as any window of the playing app is fullscreen
+      and frontmost.
     EOS
   end
 
