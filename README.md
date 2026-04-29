@@ -27,51 +27,94 @@ Pause, switch apps, or exit fullscreen, and the bar comes back.
 
 ## How it works
 
-houdini hides the menu bar only when **all three** are true:
+houdini hides the menu bar only when **all** of these are true:
 
 1. An app is in native fullscreen
 2. That app is the frontmost (focused) app
 3. That same app is actively playing media via Now Playing
+4. The focused window's title contains the Now Playing track title — distinguishes between two windows of the same app, e.g. a playing FS Chrome tab vs. a different FS Chrome window.
 
-When any one becomes false, the menu bar comes back.
+When any becomes false, the menu bar comes back.
 
 ```
-   ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-   │  AppKit          │    │  Dock log        │    │  MediaRemote     │
-   │  (in-process)    │    │  (subprocess)    │    │  (perl shim)     │
-   └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
-            │                       │                       │
-       frontmost              fs=true|false              isPlaying,
-       changed                + fs↔fs pulse              owning pid
-            │                       │                       │
-            └───────────────────────┼───────────────────────┘
-                                    ▼
-                            ┌───────────────┐
-                            │  Controller   │
-                            └───────┬───────┘
-                                    ▼
-                          shouldHideMenuBar — all of:
-                          (1) active Space is FS
-                          (2) media is playing
-                          (3) frontmost owns FS Space (multi-display gate)
-                          (4) frontmost is the Now Playing source
-                                    │
-                                    ▼
-                               HIDE or SHOW
-                                    │
-                                    ▼
-                       AppleMenuBarVisibleInFullscreen
-                       + DistributedNotification (WindowServer reads the pref)
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│    AppKit    │   │   Dock Log   │   │ MediaRemote  │   │  AXWatcher   │
+│ (in-process) │   │ (subprocess) │   │  (Perl shim) │   │ (in-process) │
+└──────┬───────┘   └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+       │                  │                  │                  │
+       │ frontmost        │ FS state         │ playback state   │ AX focus
+       │ changed          │ + owner PID      │ + PID            │ + title change
+       │                  │ + FS↔FS hop      │ + bundle         │ notifications
+       │                  │   (refresh PID)  │ + track title    │
+       ▼                  ▼                  ▼                  ▼
+   front_app         dock_fs/state        adapter            window
+       │             dock_stay               │                  │
+       │                  │                  │                  │
+       └────────────┬─────┴─────┬────────────┴─────┬────────────┘
+                    ▼           ▼                  ▼
+                ┌──────────────────────────────────────┐
+                │              Controller              │
+                │  + initial one-time launch trigger   │
+                └──────────────────┬───────────────────┘
+                                   ▼
+                             takeSnapshot()
+                    (always re-reads window title via AX)
+                                   │
+                                   ▼
+                      menuBarDecision (sequential gates)
+                      ─────────────────────────────────
+
+                    (1) Fullscreen Space active?
+                        └─ no  → SHOW(not_fullscreen)
+
+                    (2) Media playing?
+                        └─ no  → SHOW(not_playing)
+
+                    (3) Frontmost PID present?
+                        └─ no  → SHOW(no_front_pid)
+
+                    (4) Now Playing PID present?
+                        └─ no  → SHOW(no_now_playing_pid)
+
+                    (5) Frontmost owns FS Space?
+                        (multi-display gate)
+                        └─ no  → SHOW(front_not_fs_owner)
+
+                    (6) Frontmost == Now Playing source?
+                        (process or bundle match)
+                        └─ no  → SHOW(app_mismatch)
+
+                    (7) Window title contains track title?
+                        (AX-based refinement)
+                        └─ no  → SHOW(window_mismatch)
+
+                                   ▼
+                              HIDE / SHOW
+                                   │
+                                   ▼
+            AppleMenuBarVisibleInFullscreen (system pref)
+            + DistributedNotification → WindowServer
 ```
 
-Internally:
+<details>
+<summary><strong>Internally</strong> — where each signal comes from</summary>
 
-- **(1) and (2)** come from Dock's `dock-visibility` log channel, tapped by spawning `/usr/bin/log stream`. The predicate filters to two message shapes:
+- **Fullscreen state and the FS owner's PID.** Dock's `dock-visibility` log channel, tapped by spawning `/usr/bin/log stream`. The predicate filters to two message shapes:
   - `Space Forces Hidden:` — emitted on FS entry/exit, carries the active Space's fullscreen flag and the FS app's PID.
   - `Skipping no-op state update` — emitted on FS↔FS Space switches where Dock's own visibility doesn't need to flip; a payload-less wake-up pulse that lets us refresh the cached FS owner from `NSWorkspace.frontmostApplication`. Without this, switching directly between two fullscreen apps would keep the menu bar in the wrong state.
-- **(3)** comes from the system MediaRemote framework via the vendored `mediaremote-adapter` subprocess (perl is on Apple's MediaRemote allowlist; an unentitled Swift binary isn't).
 
-All signals are public, unentitled APIs.
+  **Why FS detection isn't AX-based.** The obvious alternative — observing `kAXFullScreenAttribute` on the focused window — was tried and rejected. AX notifications flake during fullscreen animations, and a window's `AXFullScreen` attribute is set asynchronously by the app, sometimes hundreds of milliseconds after Dock declares the transition complete; querying AX right after a Space change produced false negatives, silently missing a meaningful fraction of FS toggles. AX also misses the notification entirely for FS transitions triggered via the green stoplight button or an in-page media-player FS toggle when the app first launches. Reading from Dock's log sidesteps the race because Dock emits at decision time, before any FS-aware app has finished animating. AX is opt-in here only for window-*title* refinement, where racing to read a stable string is far more forgiving than racing to detect a state edge — and where a missed read just falls through to the lenient HIDE default.
+- **Frontmost app, bundle id, and responsibility-PID.** AppKit's `NSWorkspace.didActivateApplicationNotification` plus `NSWorkspace.frontmostApplication`; the responsibility-PID is read via the private `responsibility_get_pid_responsible_for_pid` syscall (declared via `@_silgen_name` in `Sources/PID.swift`) and resolves helper processes to their parent app (e.g. WebKit.GPU → Safari) so the same-app check works without adapter cooperation.
+- **Now Playing — `playing` flag, owning PID, parent bundle, and track title.** The system MediaRemote framework, via the vendored `mediaremote-adapter` subprocess (perl is on Apple's MediaRemote allowlist; an unentitled Swift binary isn't). The adapter is run in `stream` mode with `--no-diff --debounce=200 --no-artwork`; each newline-delimited JSON event is decoded into a `NowPlayingSnapshot`.
+- **Focused window's title (window-level refinement).** Accessibility, two paths working together:
+  - An `AXObserver` subscribed to `kAXFocusedWindowChangedNotification`, `kAXFocusedUIElementChangedNotification`, and per-window `kAXTitleChangedNotification` (re-pointed each time the focused window changes). Each notification fires `evaluate(.window)` so within-app focus and title changes re-evaluate the decision.
+  - On-demand window-title resolution at snapshot time: walk `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` in z-order, bridge each on-screen `CGWindowID` to its `AXUIElement` via the private `_AXUIElementGetWindow` SPI, and return the first non-empty `kAXTitleAttribute`. Z-order (rather than `kAXFocusedWindow`) is used because AX-focused window doesn't update on Space swipes, and because some apps (Chrome) put a titleless helper window ahead of the actual content window in fullscreen.
+
+  When AX permission isn't granted the watcher is a no-op (logged once via `noteAXError`) and the daemon degrades to process-level matching only.
+
+All signals are public APIs (`responsibility_get_pid_responsible_for_pid` and `_AXUIElementGetWindow` are private SPIs; the rest are public). No entitlements required.
+
+</details>
 
 **Hardware note.** Houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2022+).
 
@@ -95,6 +138,16 @@ Then start the service:
 
 ```bash
 brew services start houdini
+```
+
+### Accessibility permission
+
+The first start prompts for **Accessibility permission**. Granting it lets houdini distinguish between two windows of the same app — e.g. only hide the menu bar when the *playing* Chrome tab is fullscreen, not a different fullscreen Chrome window. Without permission, the daemon falls back to process-level matching only (it'll hide the bar for any FS Chrome window when audio is playing in any of them).
+
+If you dismiss the prompt or revoke later, run `brew services restart houdini` to re-trigger it. After **`brew upgrade houdini`** you'll need to re-grant — macOS treats the freshly-signed binary as a new identity, so the existing AX grant no longer applies. Restart the service to re-prompt:
+
+```bash
+brew services restart houdini
 ```
 
 ## Usage
@@ -127,9 +180,13 @@ houdini help                      # full usage
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
-- `controller` — HIDE/SHOW snapshots (info), plus per-input breadcrumbs at debug: `dock_visibility` (parsed Dock events), `front_change` (frontmost-app changes), `eval_suppressed` (an evaluation that produced no decision change)
-- `adapter` — `np_event` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug)
-- `general` — startup/shutdown notices, warnings, errors (info)
+- `controller` — HIDE/SHOW snapshots (info), plus per-input breadcrumbs at debug:
+  - `dock_visibility fs=… pid=…` (parsed `Space Forces Hidden:` lines) and `dock_visibility stay_space_change` (the FS↔FS hop pulse)
+  - `front_change pid=… bundle=… name=…` (each AppKit `didActivateApplicationNotification`)
+  - `→ AX_EVENT name=… app=… pid=… window=…` (per AX focus / UI-element / title notification — useful for correlating a HIDE/SHOW with the AX event that triggered it)
+  - `eval_suppressed trig=…` (snapshot equal to the previous one) and `eval_suppressed_null_window trig=window` (AX-driven evaluation where the focused window's title came back nil — a transient AX state during normal interaction; suppressed so the menu bar doesn't flicker)
+- `adapter` — `np_event type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug)
+- `general` — startup/shutdown notices, warnings (including the one-shot AX-permission notice from `noteAXError`), errors (info / error)
 
 `houdini logs` streams everything across all three categories at debug level — no flags, one stream, ready to copy-paste into a bug report. The system handles retention and rotation; nothing on disk to manage.
 
@@ -142,26 +199,31 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 
 ## Troubleshooting
 
+<details>
+<summary>Click to expand</summary>
+
 ### The menu bar isn't hiding
 
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a HIDE/SHOW snapshot with the inputs that drove it:
 
 ```
-HIDE  trig=adapter front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501]
-np=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes]
+→ HIDE  trig=adapter front=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube"]
+→ NP=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
 ```
 
-The leading verb is `HIDE` or `SHOW(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, or `app_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, or `adapter`. `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app check actually compares.
+The leading verb is `→ HIDE` or `→ SHOW(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, or `window_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, or `window` (an AX focus/title event). `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app process check actually compares. `win=` is the focused window's AX title; `title=` on the NP line is the Now Playing track title — the window-level refinement does a substring match between them.
 
-Each input also leaves a debug breadcrumb at the boundary, so a wrong decision can be traced back to the data that drove it: `np_event …` per Now Playing event from mediaremote-adapter, `front_change …` when AppKit reports a new frontmost app, `dock_visibility …` per parsed Dock event, and `eval_suppressed trig=…` when the evaluation produced no change.
+Each input also leaves a debug breadcrumb at the boundary, so a wrong decision can be traced back to the data that drove it: `np_event …` per Now Playing event from mediaremote-adapter, `front_change …` when AppKit reports a new frontmost app, `dock_visibility …` per parsed Dock event, `→ AX_EVENT …` per AX focus/title notification, and `eval_suppressed trig=…` / `eval_suppressed_null_window trig=…` when the evaluation produced no change.
 
-Hide requires all of: `fs=yes` (Dock has reported a fullscreen Space), the frontmost `pid` matching `fsPid` (the FS-Space owner), `play=yes`, and frontmost/Now-Playing resolving to the same app. Common reasons a SHOW is logged when you expected HIDE:
+Hide requires all of: `fs=yes`, the frontmost `pid` matching `fsPid`, `play=yes`, frontmost/Now-Playing resolving to the same app (process or bundle match), and — when both sides have a title — the window title containing the track title. Common reasons a SHOW is logged when you expected HIDE:
 
-- **`fs=no`** — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons in YouTube, Netflix, QuickTime) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
-- **`fs=yes` but `pid ≠ fsPid`** — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
-- **`np=[pid=null,...]`** — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media session metadata) never register with the system Now Playing widget.
-- **`play=no`** — the Now Playing source is paused; play/pause state comes directly from the media app.
-- **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
+- **`fs=no`** (`SHOW(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons in YouTube, Netflix, QuickTime) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
+- **`play=no`** (`SHOW(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
+- **front `pid=null`** (`SHOW(no_front_pid)`) — defensive; AppKit reported no frontmost application. Rare in practice (some kinds of Lock-Screen / login-window state).
+- **`np=[pid=null,...]`** (`SHOW(no_now_playing_pid)`) — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media-session metadata) never register with the system Now Playing widget.
+- **`fs=yes` but `pid ≠ fsPid`** (`SHOW(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
+- **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** (`SHOW(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
+- **`win="…"` doesn't contain `title="…"`** (`SHOW(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission `win=null`, the check falls through to HIDE — the daemon then can't distinguish window-level cases.
 
 ### Is it actually running?
 
@@ -193,6 +255,8 @@ brew services start houdini
 ```
 
 houdini terminates its child `log stream` subprocess on shutdown, so a separate `pkill` for it isn't needed.
+
+</details>
 
 ## Project layout
 

@@ -176,7 +176,8 @@ actor AdapterClient {
         let pid = payload.pid.map { "\($0.rawValue)" } ?? "null"
         let bundle = payload.bundle ?? "null"
         let parent = payload.parentBundle ?? "null"
-        return "np_event type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent)"
+        let title = payload.title ?? "null"
+        return "np_event type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent) title=\(title)"
     }
 
     /// Shared to avoid per-line allocation churn.
@@ -193,6 +194,7 @@ struct NowPlayingSnapshot {
     let pid: NowPlayingPID?
     let bundle: String?
     let parentBundle: String?
+    let title: String?
 
     /// All-nil sentinel for "nothing is playing." Returned for
     /// `get`-mode `null`/empty output and `stream`-mode `data`
@@ -202,6 +204,7 @@ struct NowPlayingSnapshot {
         pid: nil,
         bundle: nil,
         parentBundle: nil,
+        title: nil,
     )
 }
 
@@ -214,6 +217,7 @@ extension NowPlayingSnapshot: Decodable {
         case pid = "processIdentifier"
         case bundle = "bundleIdentifier"
         case parentBundle = "parentApplicationBundleIdentifier"
+        case title
     }
 
     /// Missing keys decode to defaults (`playing` → `false`, optionals
@@ -227,6 +231,7 @@ extension NowPlayingSnapshot: Decodable {
             pid: c.decodeIfPresent(NowPlayingPID.self, forKey: .pid),
             bundle: c.decodeIfPresent(String.self, forKey: .bundle),
             parentBundle: c.decodeIfPresent(String.self, forKey: .parentBundle),
+            title: c.decodeIfPresent(String.self, forKey: .title),
         )
     }
 }

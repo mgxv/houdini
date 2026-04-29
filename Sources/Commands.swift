@@ -170,8 +170,8 @@ func usage() {
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility
-                                events, mediaremote-adapter output,
-                                startup notices, etc.
+                                events, AX focus events,
+                                mediaremote-adapter output, etc.
       houdini version           Print version
       houdini help              Print this help
 

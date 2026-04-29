@@ -12,6 +12,7 @@ enum MenuBarDecision {
     case showNoNowPlayingPid
     case showFrontNotFsOwner
     case showAppMismatch
+    case showWindowMismatch
 
     var shouldHide: Bool {
         if case .hide = self { return true }
@@ -20,13 +21,14 @@ enum MenuBarDecision {
 
     var tag: String {
         switch self {
-        case .hide: "HIDE"
-        case .showNotFullScreen: "SHOW(not_fullscreen)"
-        case .showNotPlaying: "SHOW(not_playing)"
-        case .showNoFrontPid: "SHOW(no_front_pid)"
-        case .showNoNowPlayingPid: "SHOW(no_now_playing_pid)"
-        case .showFrontNotFsOwner: "SHOW(front_not_fs_owner)"
-        case .showAppMismatch: "SHOW(app_mismatch)"
+        case .hide: "→ HIDE"
+        case .showNotFullScreen: "→ SHOW(not_fullscreen)"
+        case .showNotPlaying: "→ SHOW(not_playing)"
+        case .showNoFrontPid: "→ SHOW(no_front_pid)"
+        case .showNoNowPlayingPid: "→ SHOW(no_now_playing_pid)"
+        case .showFrontNotFsOwner: "→ SHOW(front_not_fs_owner)"
+        case .showAppMismatch: "→ SHOW(app_mismatch)"
+        case .showWindowMismatch: "→ SHOW(window_mismatch)"
         }
     }
 }
@@ -37,6 +39,7 @@ enum EvalTrigger: String {
     case dockFs = "dock_fs"
     case dockStay = "dock_stay"
     case adapter
+    case window
 }
 
 /// `frontPID.rawValue == dockFs.pid` is the multi-display gate: if
@@ -44,7 +47,7 @@ enum EvalTrigger: String {
 /// app on display 1, the front PID won't match the Dock-reported FS
 /// owner and we keep the menu bar visible.
 ///
-/// The two identity checks for the same-app-as-Now-Playing test:
+/// Same-app-as-Now-Playing tests (process-level — either is sufficient):
 ///   1. Responsibility-PID mapping via the kernel syscall
 ///      (`FrontmostPID.isSameProcess(as:)`), which handles helper
 ///      processes (WebKit.GPU resolves to Safari) without adapter
@@ -53,28 +56,46 @@ enum EvalTrigger: String {
 ///      `parentApplicationBundleIdentifier` — MediaRemote's direct
 ///      assertion of the owning app, a fallback if the responsibility
 ///      syscall regresses.
+///
+/// Window-level refinement runs only after the process check passes:
+/// case-insensitive substring match between Now Playing's `title` and
+/// the focused window's title. Catches the "two FS Chrome windows,
+/// only one playing" case where process equality alone says hide.
+/// Lenient on missing data — if either side's title is nil/empty,
+/// fall through to hide so we don't flicker on title-lag right after
+/// focus changes.
 func menuBarDecision(
     dockFs: DockFullScreenState,
     isPlaying: Bool,
     frontPID: FrontmostPID?,
     frontBundle: String?,
+    frontWindowTitle: String?,
     nowPlayingPID: NowPlayingPID?,
     nowPlayingParentBundle: String?,
+    nowPlayingTitle: String?,
 ) -> MenuBarDecision {
     guard dockFs.isFullScreen else { return .showNotFullScreen }
     guard isPlaying else { return .showNotPlaying }
     guard let frontPID else { return .showNoFrontPid }
     guard let nowPlayingPID else { return .showNoNowPlayingPid }
-    guard let dockFsPID = dockFs.pid, frontPID.rawValue == dockFsPID else {
-        return .showFrontNotFsOwner
-    }
-    if frontPID.isSameProcess(as: nowPlayingPID) { return .hide }
-    if let frontBundle, let parent = nowPlayingParentBundle,
-       !parent.isEmpty, parent == frontBundle
+
+    guard let dockFsPID = dockFs.pid else { return .showFrontNotFsOwner }
+    guard frontPID.rawValue == dockFsPID else { return .showFrontNotFsOwner }
+
+    let processMatch = frontPID.isSameProcess(as: nowPlayingPID)
+    let bundleMatch: Bool = {
+        guard let parent = nowPlayingParentBundle, !parent.isEmpty else { return false }
+        return parent == frontBundle
+    }()
+    guard processMatch || bundleMatch else { return .showAppMismatch }
+
+    if let npTitle = nowPlayingTitle, !npTitle.isEmpty,
+       let winTitle = frontWindowTitle, !winTitle.isEmpty,
+       !winTitle.contains(npTitle)
     {
-        return .hide
+        return .showWindowMismatch
     }
-    return .showAppMismatch
+    return .hide
 }
 
 @MainActor
@@ -87,11 +108,13 @@ final class Controller: NSObject {
         let frontPID: FrontmostPID?
         let frontName: String
         let frontBundle: String?
+        let frontWindowTitle: String?
         let dockFs: DockFullScreenState
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
+        let nowPlayingTitle: String?
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -99,8 +122,10 @@ final class Controller: NSObject {
                 isPlaying: isPlaying,
                 frontPID: frontPID,
                 frontBundle: frontBundle,
+                frontWindowTitle: frontWindowTitle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
+                nowPlayingTitle: nowPlayingTitle,
             )
         }
     }
@@ -111,10 +136,30 @@ final class Controller: NSObject {
     private var nowPlayingPID: NowPlayingPID?
     private var nowPlayingBundle: String?
     private var nowPlayingParentBundle: String?
+    private var nowPlayingTitle: String?
     private var lastSnapshot: Snapshot?
 
     private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] event in
         self?.handleDockEvent(event)
+    }
+
+    /// AX events fire `evaluate(.window)` so within-app focus and
+    /// title changes (tab switches, page navigation) refresh the
+    /// window-title check without requiring a front-app change.
+    /// AX permission isn't load-bearing — when it isn't granted, the
+    /// watcher is a no-op and the daemon degrades to process-level
+    /// matching only.
+    ///
+    /// Each event is logged as `→ AX_EVENT` for diagnostics — useful
+    /// when the daemon's decision and the user's perception disagree
+    /// (e.g. background-tab webview activity firing focus events
+    /// against a non-visible window in Chrome).
+    private lazy var axWatcher = AXWatcher { [weak self] name, element in
+        guard let self else { return }
+        Log.controller.debug(
+            "\(Self.formatAXEvent(name: name, element: element), privacy: .public)",
+        )
+        evaluate(trigger: .window)
     }
 
     init(menuBar: MenuBarToggler) {
@@ -132,6 +177,7 @@ final class Controller: NSObject {
             object: nil,
         )
         try dockSpaceWatcher.start()
+        axWatcher.attach(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
         evaluate(trigger: .start)
     }
 
@@ -139,11 +185,13 @@ final class Controller: NSObject {
     /// termination handler doesn't `die` on graceful shutdown.
     func stop() {
         dockSpaceWatcher.stop()
+        axWatcher.detach()
     }
 
     @objc private func onFrontAppChange(_: Notification) {
         let app = NSWorkspace.shared.frontmostApplication
         Log.controller.debug("\(Self.formatFrontChange(app), privacy: .public)")
+        axWatcher.attach(pid: app?.processIdentifier)
         evaluate(trigger: .frontApp)
     }
 
@@ -152,6 +200,7 @@ final class Controller: NSObject {
         nowPlayingPID = snapshot.pid
         nowPlayingBundle = snapshot.bundle
         nowPlayingParentBundle = snapshot.parentBundle
+        nowPlayingTitle = snapshot.title
         evaluate(trigger: .adapter)
     }
 
@@ -186,6 +235,21 @@ final class Controller: NSObject {
 
     private func evaluate(trigger: EvalTrigger) {
         let snap = takeSnapshot()
+
+        // AX events fire on every UI focus move; the focused
+        // element's window often reads as nil-title for ~50–500ms
+        // during normal interaction. Suppress AX-driven nil-title
+        // evaluations so the menu bar doesn't flicker on every
+        // keystroke / focus shift. Non-AX triggers (front_app,
+        // dock_fs, dock_stay, adapter, start) still go through with
+        // nil so legitimate app/state changes aren't lost.
+        if trigger == .window, snap.frontWindowTitle == nil {
+            Log.controller.debug(
+                "eval_suppressed_null_window trig=\(trigger.rawValue, privacy: .public)",
+            )
+            return
+        }
+
         guard snap != lastSnapshot else {
             Log.controller.debug(
                 "eval_suppressed trig=\(trigger.rawValue, privacy: .public)",
@@ -203,16 +267,22 @@ final class Controller: NSObject {
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let frontName = frontApp?.localizedName ?? "(unknown)"
         let frontBundle = frontApp?.bundleIdentifier
+        // Pulled fresh per snapshot — AX state can drift between
+        // events even within the same app (tab switches, page nav),
+        // so the title can't be cached on `frontApp` change alone.
+        let frontWindowTitle = visibleWindowTitle(for: frontApp?.processIdentifier)
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
             frontBundle: frontBundle,
+            frontWindowTitle: frontWindowTitle,
             dockFs: dockFs,
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
             nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
+            nowPlayingTitle: nowPlayingTitle,
         )
     }
 
@@ -238,7 +308,7 @@ final class Controller: NSObject {
         // terminals once full bundles + parent + resp were included.
         """
         \(snap.decision.tag)  trig=\(trigger.rawValue) front=\(formatFront(snap))
-        np=\(formatNowPlaying(snap))
+        → NP=\(formatNowPlaying(snap))
         """
     }
 
@@ -249,6 +319,17 @@ final class Controller: NSObject {
         return "front_change pid=\(pid) bundle=\(bundle) name=\(name)"
     }
 
+    /// One line per AX notification, with the focused element's
+    /// containing window title surfaced — lets you correlate a
+    /// HIDE/SHOW decision to the AX event that triggered it.
+    private static func formatAXEvent(name: String, element: AXUIElement) -> String {
+        let app = NSWorkspace.shared.frontmostApplication
+        let pid = app?.processIdentifier ?? 0
+        let appName = quoteString(app?.localizedName ?? "(unknown)")
+        let title = quoteString(windowTitle(forElement: element) ?? "")
+        return "→ AX_EVENT name=\(name) app=\(appName) pid=\(pid) window=\(title)"
+    }
+
     private static func formatFront(_ snap: Snapshot) -> String {
         let head = bundleShort(snap.frontBundle) ?? ""
         let pid = formatNullable(snap.frontPID?.rawValue)
@@ -257,7 +338,8 @@ final class Controller: NSObject {
         let resp = formatNullable(snap.frontPID?.responsiblePID)
         let fs = snap.dockFs.isFullScreen ? "yes" : "no"
         let fsPid = formatNullable(snap.dockFs.pid)
-        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid)]"
+        let win = formatNullableString(snap.frontWindowTitle)
+        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
@@ -267,7 +349,8 @@ final class Controller: NSObject {
         let parent = formatNullableString(snap.nowPlayingParentBundle)
         let resp = formatNullable(snap.nowPlayingPID?.responsiblePID)
         let play = snap.isPlaying ? "yes" : "no"
-        return "\(head)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play)]"
+        let title = formatNullableString(snap.nowPlayingTitle)
+        return "\(head)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play),title=\(title)]"
     }
 
     /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →
