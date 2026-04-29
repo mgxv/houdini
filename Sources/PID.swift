@@ -30,6 +30,21 @@ struct NowPlayingPID: Hashable {
     }
 }
 
+/// True if `a` and `b` resolve to the same user-facing app via
+/// `responsibility_get_pid_responsible_for_pid`. The syscall returns
+/// 0 for untracked PIDs and the PID itself for non-delegating ones;
+/// both filter out via the `> 0` and identity checks. See
+/// `isSameProcess(as:)` for the four match paths in plain English.
+private func sameResponsibleApp(_ a: pid_t, _ b: pid_t) -> Bool {
+    if a == b { return true }
+    let aResp = responsibleProcess(for: a)
+    if aResp > 0, aResp == b { return true }
+    let bResp = responsibleProcess(for: b)
+    if bResp > 0, bResp == a { return true }
+    if aResp > 0, bResp > 0, aResp == bResp { return true }
+    return false
+}
+
 extension FrontmostPID {
     /// Browsers route media through helper processes and during
     /// fullscreen video may promote a *different* helper to the
@@ -43,31 +58,15 @@ extension FrontmostPID {
     /// Callers must use this explicitly — the two types are
     /// deliberately not Equatable across roles.
     func isSameProcess(as other: NowPlayingPID) -> Bool {
-        if rawValue == other.rawValue { return true }
-        // `responsibleProcess` returns 0 for untracked processes,
-        // and the PID itself for non-delegating ones. Resolve Now
-        // Playing first — Path 1 is the common case.
-        let nowPlayingResponsiblePID = responsibleProcess(for: other.rawValue)
-        // Path 1: Now Playing is a helper that delegates up to us.
-        if nowPlayingResponsiblePID > 0,
-           nowPlayingResponsiblePID == rawValue
-        {
-            return true
-        }
-        let frontmostResponsiblePID = responsibleProcess(for: rawValue)
-        // Path 2: we're a helper that delegates up to Now Playing.
-        if frontmostResponsiblePID > 0,
-           frontmostResponsiblePID == other.rawValue
-        {
-            return true
-        }
-        // Path 3: both helpers of the same user-facing app.
-        if frontmostResponsiblePID > 0,
-           frontmostResponsiblePID == nowPlayingResponsiblePID
-        {
-            return true
-        }
-        return false
+        sameResponsibleApp(rawValue, other.rawValue)
+    }
+
+    /// True if Dock's FS Space owner resolves to the same app.
+    /// Chrome/Safari host the FS window in a helper, so the FS-owner
+    /// pid often differs from `frontmostApplication`'s pid — strict
+    /// equality would mis-trip `front_not_fs_owner`.
+    func isSameApp(asFSOwnerPID fsOwnerPID: pid_t) -> Bool {
+        sameResponsibleApp(rawValue, fsOwnerPID)
     }
 }
 

@@ -66,11 +66,19 @@ func visibleWindowTitle(for pid: pid_t?) -> String? {
     ) == .success, let windows = windowsRef as? [AXUIElement]
     else { return nil }
 
+    // Map AX windows by CGWindowID once — drops the SPI count from
+    // O(candidates × windows) to O(windows) for apps with many windows.
+    var windowByCGID: [CGWindowID: AXUIElement] = [:]
+    windowByCGID.reserveCapacity(windows.count)
+    for window in windows {
+        var cgID: CGWindowID = 0
+        if _AXUIElementGetWindow(window, &cgID) == .success {
+            windowByCGID[cgID] = window
+        }
+    }
+
     for candidate in candidateIDs {
-        guard let window = windows.first(where: { window in
-            var cgID: CGWindowID = 0
-            return _AXUIElementGetWindow(window, &cgID) == .success && cgID == candidate
-        }) else { continue }
+        guard let window = windowByCGID[candidate] else { continue }
 
         var titleRef: AnyObject?
         guard AXUIElementCopyAttributeValue(
