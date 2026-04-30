@@ -164,8 +164,9 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 ## Diagnostics
 
 ```bash
-houdini status                    # print version, daemon state, and
-                                  # whether Accessibility is granted
+houdini status                    # print version, daemon state,
+                                  # adapter/dock-log subprocess health,
+                                  # and Accessibility permission
 houdini logs                      # stream every houdini unified-log entry
                                   # across all categories at debug level
                                   # (controller decisions, dock-visibility
@@ -176,7 +177,7 @@ houdini version                   # print version
 houdini help                      # full usage
 ```
 
-`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon isn't running, so it composes in scripts. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
+`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, whether the daemon's two subprocesses (`mediaremote-adapter` and the Dock-log `log stream`) are alive, and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon isn't running, so it composes in scripts. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
