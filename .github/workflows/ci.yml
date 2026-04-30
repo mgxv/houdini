@@ -60,14 +60,22 @@ jobs:
           swift --version
       - name: SwiftPM build
         run: swift build
-      - name: swift test
-        run: swift test -Xswiftc -swift-version -Xswiftc 6 -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
       - name: scripts/build.sh
         run: ./scripts/build.sh
       - name: Smoke test
         run: |
           ./houdini help
           ./houdini version
+
+  tests:
+    name: Tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show toolchain
+        run: swift --version
+      - name: swift test
+        run: swift test -Xswiftc -swift-version -Xswiftc 6 -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
   sanitize:
     name: ${{ matrix.name }}
