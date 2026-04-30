@@ -56,14 +56,6 @@ enum Overrule: String {
     case forceShow = "force_show"
 }
 
-func effectiveShouldHide(decision: MenuBarDecision, overrule: Overrule) -> Bool {
-    switch overrule {
-    case .forceHide: true
-    case .forceShow: false
-    case .auto: decision.shouldHide
-    }
-}
-
 /// `frontPID.isSameApp(asFSOwnerPID: dockFs.pid)` is the multi-display
 /// gate: if FS Chrome is on display 2 but the user is focused on a
 /// windowed app on display 1, the front PID won't resolve to the same
@@ -157,7 +149,11 @@ final class Controller: NSObject {
         }
 
         var effectiveShouldHide: Bool {
-            houdini.effectiveShouldHide(decision: decision, overrule: overrule)
+            switch overrule {
+            case .forceHide: true
+            case .forceShow: false
+            case .auto: decision.shouldHide
+            }
         }
     }
 
