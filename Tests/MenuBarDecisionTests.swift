@@ -39,7 +39,7 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gate 1: fullscreen
 
-    @Test("Gate 1: not fullscreen → SHOW(not_fullscreen)")
+    @Test("Gate 1: not fullscreen → show(not_fullscreen)")
     func gate1NotFullScreen() {
         var i = Inputs()
         i.dockFs = .init(isFullScreen: false, pid: nil)
@@ -57,7 +57,7 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gate 2: playing
 
-    @Test("Gate 2: not playing → SHOW(not_playing)")
+    @Test("Gate 2: not playing → show(not_playing)")
     func gate2NotPlaying() {
         var i = Inputs()
         i.isPlaying = false
@@ -66,14 +66,14 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gates 3 & 4: presence
 
-    @Test("Gate 3: nil frontPID → SHOW(no_front_pid)")
+    @Test("Gate 3: nil frontPID → show(no_front_pid)")
     func gate3NoFrontPID() {
         var i = Inputs()
         i.frontPID = nil
         #expect(i.decision == .showNoFrontPid)
     }
 
-    @Test("Gate 4: nil nowPlayingPID → SHOW(no_now_playing_pid)")
+    @Test("Gate 4: nil nowPlayingPID → show(no_now_playing_pid)")
     func gate4NoNowPlayingPID() {
         var i = Inputs()
         i.nowPlayingPID = nil
@@ -82,14 +82,14 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gates 5/6: FS-owner
 
-    @Test("Gate 5: nil dockFs.pid → SHOW(front_not_fs_owner)")
+    @Test("Gate 5: nil dockFs.pid → show(front_not_fs_owner)")
     func gate5NilDockFsPID() {
         var i = Inputs()
         i.dockFs = .init(isFullScreen: true, pid: nil)
         #expect(i.decision == .showFrontNotFsOwner)
     }
 
-    @Test("Gate 5: front PID doesn't resolve to FS-owner → SHOW(front_not_fs_owner)")
+    @Test("Gate 5: front PID doesn't resolve to FS-owner → show(front_not_fs_owner)")
     func gate5FrontNotFsOwner() {
         var i = Inputs()
         i.frontPID = .init(100)
@@ -110,7 +110,7 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gate 7: same-app
 
-    @Test("Gate 7: process AND bundle mismatch → SHOW(app_mismatch)")
+    @Test("Gate 7: process AND bundle mismatch → show(app_mismatch)")
     func gate7AppMismatch() {
         var i = Inputs()
         i.frontPID = .init(100)
@@ -156,7 +156,7 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gate 8: window-title refinement
 
-    @Test("Gate 8: title contains NP title → HIDE")
+    @Test("Gate 8: title contains NP title → hide")
     func gate8TitleContains() {
         var i = Inputs()
         i.frontWindowTitle = "Track X — YouTube — Google Chrome"
@@ -164,7 +164,7 @@ struct MenuBarDecisionTests {
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: title doesn't contain NP title → SHOW(window_mismatch)")
+    @Test("Gate 8: title doesn't contain NP title → show(window_mismatch)")
     func gate8TitleMismatch() {
         var i = Inputs()
         i.frontWindowTitle = "Settings — Google Chrome"
@@ -180,28 +180,28 @@ struct MenuBarDecisionTests {
         #expect(i.decision == .showWindowMismatch)
     }
 
-    @Test("Gate 8: nil window title is lenient → HIDE")
+    @Test("Gate 8: nil window title is lenient → hide")
     func gate8NilWindowTitleLenient() {
         var i = Inputs()
         i.frontWindowTitle = nil
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: empty window title is lenient → HIDE")
+    @Test("Gate 8: empty window title is lenient → hide")
     func gate8EmptyWindowTitleLenient() {
         var i = Inputs()
         i.frontWindowTitle = ""
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: nil NP title is lenient → HIDE")
+    @Test("Gate 8: nil NP title is lenient → hide")
     func gate8NilNowPlayingTitleLenient() {
         var i = Inputs()
         i.nowPlayingTitle = nil
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: empty NP title is lenient → HIDE")
+    @Test("Gate 8: empty NP title is lenient → hide")
     func gate8EmptyNowPlayingTitleLenient() {
         var i = Inputs()
         i.nowPlayingTitle = ""

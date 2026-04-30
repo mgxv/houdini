@@ -82,14 +82,30 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
 
 // MARK: - status
 
-/// Exits non-zero when the daemon isn't running, so
-/// `houdini status && …` is a usable script primitive.
 @MainActor
 func runStatus() -> Never {
     let daemonRunning = probeDaemonRunning()
-    print("version:  houdini \(version)")
-    print("daemon:   \(daemonRunning ? "running" : "not running")")
-    exit(daemonRunning ? 0 : 1)
+    let adapterAlive = subprocessAlive(matching: #"mediaremote-adapter.pl.*MediaRemoteAdapter.framework"#) // swiftformat:disable all
+    let dockLogAlive = subprocessAlive(matching: #"log stream.*dock-visibility"#)
+    let axTrusted = isAccessibilityTrusted()
+    print("version:        \(version)")
+    print("daemon:         \(daemonRunning ? "running" : "not running")")
+    print("adapter:        \(adapterAlive ? "running" : "not running")")
+    print("dock log:       \(dockLogAlive ? "running" : "not running")")
+    print("accessibility:  \(axTrusted ? "granted" : "not granted")")
+    let healthy = daemonRunning && adapterAlive && dockLogAlive
+    exit(healthy ? 0 : 1)
+}
+
+private func subprocessAlive(matching pattern: String) -> Bool {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    p.arguments = ["-f", "-q", pattern]
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    do { try p.run() } catch { return false }
+    p.waitUntilExit()
+    return p.terminationStatus == 0
 }
 
 // MARK: - version
@@ -165,8 +181,10 @@ func usage() {
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
-      houdini status            Print version and whether a daemon is
-                                running. Exits non-zero if not running.
+      houdini status            Print version, daemon state, adapter
+                                + dock-log subprocess health, and
+                                Accessibility permission. Exits non-
+                                zero if the daemon isn't running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility

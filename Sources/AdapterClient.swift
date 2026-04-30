@@ -206,14 +206,14 @@ actor AdapterClient {
     }
 
     private static func formatEvent(_ event: NowPlayingStreamEvent) -> String {
-        guard event.type == "data" else { return "np_event type=\(event.type)" }
-        guard let payload = event.payload else { return "np_event type=data payload=null" }
+        guard event.type == "data" else { return "→ np_rx type=\(event.type)" }
+        guard let payload = event.payload else { return "→ np_rx type=data payload=null" }
         let play = payload.playing ? "yes" : "no"
         let pid = payload.pid.map { "\($0.rawValue)" } ?? "null"
         let bundle = payload.bundle ?? "null"
         let parent = payload.parentBundle ?? "null"
         let title = payload.title ?? "null"
-        return "np_event type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent) title=\(title)"
+        return "→ np_rx type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent) title=\(title)"
     }
 
     /// Shared to avoid per-line allocation churn.
