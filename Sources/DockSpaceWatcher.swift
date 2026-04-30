@@ -18,7 +18,7 @@ import Foundation
 /// a non-FS Space).
 struct DockFullScreenState: Equatable {
     let isFullScreen: Bool
-    let pid: pid_t?
+    let pid: FSOwnerPID?
 
     /// Default until any Dock event arrives. If the user is
     /// *already* in a fullscreen Space when the daemon launches, we
@@ -46,6 +46,8 @@ final class DockSpaceWatcher {
     AND (eventMessage CONTAINS "Space Forces Hidden:" \
     OR eventMessage CONTAINS "Skipping no-op state update")
     """
+
+    static let statusPgrepPattern = #"log stream.*dock-visibility"#
 
     private let onUpdate: @MainActor (DockSpaceEvent) -> Void
     private var subprocess: Process?
@@ -124,7 +126,7 @@ final class DockSpaceWatcher {
             guard let event = Self.parse(text) else { return }
             switch event {
             case let .fullScreenState(state):
-                let pidField = state.pid.map { "\($0)" } ?? "null"
+                let pidField = state.pid.map { "\($0.rawValue)" } ?? "null"
                 Log.controller.debug(
                     "→ dock_rx fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
                 )
@@ -162,10 +164,10 @@ final class DockSpaceWatcher {
         // `\b` prevents matching the `pid=` suffix of `spid=…` if
         // Dock ever switches the space-id separator from `:` to `=`.
         // Defensive — today's traces use `(spid: N)`.
-        var pid: pid_t?
+        var pid: FSOwnerPID?
         if let match = line.range(of: #"\bpid=\d+"#, options: .regularExpression) {
             let digits = line[match].dropFirst("pid=".count)
-            pid = pid_t(digits)
+            if let raw = pid_t(digits) { pid = FSOwnerPID(raw) }
         }
 
         return .fullScreenState(DockFullScreenState(isFullScreen: isFullScreen, pid: pid))

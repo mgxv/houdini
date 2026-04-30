@@ -26,12 +26,12 @@ FRAMEWORK_NAME="MediaRemoteAdapter"
 FRAMEWORK="${FRAMEWORK_NAME}.framework"
 BINARY="houdini"
 
-# Deployment floor + Swift compiler floor. MIN_MACOS matches the
-# Homebrew formula's `depends_on macos:`; MIN_SWIFT matches the
-# `-swift-version 6` flag passed to swiftc below (Swift 6 language mode
-# requires compiler ≥ 6.0). Package.swift's swift-tools-version is
-# independent — it gates manifest APIs, not the source-code floor.
-MIN_MACOS="15.0"
+# Deployment floor + Swift compiler floor. MIN_MACOS is read from
+# the project-root `MIN_MACOS` file in preflight (single source of
+# truth — also read by Package.swift, validated by release.sh; must
+# match the Homebrew formula's `depends_on macos:`). MIN_SWIFT
+# matches the `-swift-version 6` flag below.
+MIN_MACOS_FILE="$PROJECT_ROOT/MIN_MACOS"
 MIN_SWIFT="6.0"
 HOST_ARCH="$(uname -m)"
 
@@ -81,6 +81,10 @@ done
 [ -d "$VENDOR" ]          || die "$VENDOR/ not found — run from the project root"
 [ -d Sources ]            || die "Sources/ not found — wrong working directory?"
 [ -f Sources/main.swift ] || die "Sources/main.swift not found"
+[ -f "$MIN_MACOS_FILE" ]  || die "MIN_MACOS file missing at $MIN_MACOS_FILE"
+MIN_MACOS="$(tr -d '[:space:]' < "$MIN_MACOS_FILE")"
+[[ "$MIN_MACOS" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] \
+    || die "MIN_MACOS file is malformed: '$MIN_MACOS'"
 
 # `.swift-version` (if present) pins the dev toolchain for swiftly users
 # but isn't required — the build only enforces a minimum.

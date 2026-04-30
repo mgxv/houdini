@@ -37,21 +37,16 @@ actor AdapterClient {
     /// - `--debounce=200` collapses bursts (e.g. scrubbing) to at most
     ///    one event per 200 ms.
     /// - `--no-artwork` omits the `artworkData`/`artworkMimeType` fields.
-    ///    Houdini never reads them, and base64-encoded TIFF artwork can
-    ///    exceed the stdout line buffer on track changes.
+    ///    Houdini never reads them, and base64-encoded TIFF artwork
+    ///    bloats every event with hundreds of KiB of unused payload.
     private static let streamArgs: [String] = [
-        "stream", "--no-diff", "--debounce=200", "--no-artwork",
+        "stream",
+        "--no-diff",
+        "--debounce=200",
+        "--no-artwork",
     ]
 
-    /// Max bytes we'll buffer for a single line before treating the
-    /// subprocess as broken. `--no-artwork` keeps realistic stream-mode
-    /// events under a kilobyte, so anything past this cap is a bug.
-    /// Exceeding it is fatal — launchd will restart the daemon.
-    private static let stdoutLineLimit = 256 * 1024
-
-    /// Stderr carries short log messages from the adapter; same fatal
-    /// treatment but with a tighter cap.
-    private static let stderrLineLimit = 64 * 1024
+    static let statusPgrepPattern = #"mediaremote-adapter\.pl.*MediaRemoteAdapter\.framework"#
 
     // Process and Pipe are Sendable on macOS 15+, so the actor can
     // hand them to Foundation's @Sendable callbacks unwrapped.
@@ -141,19 +136,12 @@ actor AdapterClient {
 
     /// Single `MainActor.run` hop per chunk for atomic delivery —
     /// cross-chunk FIFO is preserved upstream by AsyncStream.
-    /// Overflowing the line cap is fatal; launchd restarts.
     private func ingestStdout(_ chunk: Data) async {
         var snapshots: [NowPlayingSnapshot] = []
         stdoutBuffer.ingest(chunk) { line in
             if let snapshot = self.parseStdoutLine(line) {
                 snapshots.append(snapshot)
             }
-        }
-        if stdoutBuffer.pendingBytes > Self.stdoutLineLimit {
-            Task { @MainActor in
-                die("adapter stdout exceeded \(Self.stdoutLineLimit / 1024) KiB without a newline")
-            }
-            return
         }
         guard !snapshots.isEmpty else { return }
 
@@ -167,16 +155,11 @@ actor AdapterClient {
     }
 
     /// Forwards each complete stderr line to the "adapter" log
-    /// category at `.debug`. Same fatal-on-overflow policy as stdout.
+    /// category at `.debug`.
     private func ingestStderr(_ chunk: Data) {
         stderrBuffer.ingest(chunk) { line in
             let text = String(data: line, encoding: .utf8) ?? "<non-utf8>"
             Log.adapter.debug("\(text, privacy: .public)")
-        }
-        if stderrBuffer.pendingBytes > Self.stderrLineLimit {
-            Task { @MainActor in
-                die("adapter stderr exceeded \(Self.stderrLineLimit / 1024) KiB without a newline")
-            }
         }
     }
 
@@ -190,7 +173,7 @@ actor AdapterClient {
 
         let event: NowPlayingStreamEvent
         do {
-            event = try Self.decoder.decode(NowPlayingStreamEvent.self, from: line)
+            event = try sharedDecoder.decode(NowPlayingStreamEvent.self, from: line)
         } catch {
             let preview = String(data: line, encoding: .utf8) ?? "<non-utf8>"
             Task { @MainActor in
@@ -199,26 +182,25 @@ actor AdapterClient {
             return nil
         }
 
-        Log.adapter.debug("\(Self.formatEvent(event), privacy: .public)")
+        Log.adapter.debug("→ \(Self.formatEvent(event), privacy: .public)")
 
         guard event.type == "data" else { return nil } // ignore heartbeats / errors
         return event.payload ?? .empty
     }
 
     private static func formatEvent(_ event: NowPlayingStreamEvent) -> String {
-        guard event.type == "data" else { return "→ np_rx type=\(event.type)" }
-        guard let payload = event.payload else { return "→ np_rx type=data payload=null" }
+        guard event.type == "data" else { return "np_rx type=\(event.type)" }
+        guard let payload = event.payload else { return "np_rx type=data payload=null" }
         let play = payload.playing ? "yes" : "no"
         let pid = payload.pid.map { "\($0.rawValue)" } ?? "null"
         let bundle = payload.bundle ?? "null"
         let parent = payload.parentBundle ?? "null"
         let title = payload.title ?? "null"
-        return "→ np_rx type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent) title=\(title)"
+        return "np_rx type=data play=\(play) pid=\(pid) bundle=\(bundle) parent=\(parent) title=\(title)"
     }
-
-    /// Shared to avoid per-line allocation churn.
-    private static let decoder = JSONDecoder()
 }
+
+private let sharedDecoder = JSONDecoder()
 
 /// What the adapter tells us about the current Now Playing source.
 /// `pid == nil` means no app currently owns Now Playing. `bundle` is
@@ -281,6 +263,16 @@ struct NowPlayingStreamEvent: Decodable {
     let payload: NowPlayingSnapshot?
 }
 
+/// Forwards a captured stderr blob to `Log.adapter.debug`, one
+/// line per entry — matching the streaming path's behavior.
+private func forwardStderrToLog(_ data: Data) {
+    guard !data.isEmpty else { return }
+    let text = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+    for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        Log.adapter.debug("\(String(line), privacy: .public)")
+    }
+}
+
 /// Synchronous one-shot `mediaremote-adapter.pl get` for the
 /// `status` subcommand. Blocks until the subprocess exits.
 ///
@@ -295,8 +287,9 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
     process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
     process.arguments = [artifacts.scriptPath, artifacts.frameworkPath, "get", "--no-artwork"]
     let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
     process.standardOutput = stdoutPipe
-    process.standardError = FileHandle.standardError
+    process.standardError = stderrPipe
 
     do {
         try process.run()
@@ -304,18 +297,17 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
         warn("failed to launch mediaremote-adapter: \(error)")
         return nil
     }
-    // Drain stdout before waiting: `readDataToEndOfFile` blocks until
-    // the adapter closes stdout at exit. The inverse order
-    // (`waitUntilExit` first) would risk the adapter blocking on a
-    // full pipe buffer.
-    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+
+    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    forwardStderrToLog(stderrData)
     guard process.terminationStatus == 0 else {
         warn("mediaremote-adapter exited with status \(process.terminationStatus)")
         return nil
     }
 
-    let trimmed = (String(data: data, encoding: .utf8) ?? "")
+    let trimmed = (String(data: stdoutData, encoding: .utf8) ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty || trimmed == "null" {
         return .empty
@@ -325,7 +317,7 @@ func fetchNowPlayingOnce(artifacts: AdapterArtifacts) -> NowPlayingSnapshot? {
         return nil
     }
     do {
-        return try JSONDecoder().decode(NowPlayingSnapshot.self, from: jsonData)
+        return try sharedDecoder.decode(NowPlayingSnapshot.self, from: jsonData)
     } catch {
         warn("could not decode adapter get output: \(trimmed) (\(error))")
         return nil

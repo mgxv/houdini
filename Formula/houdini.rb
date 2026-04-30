@@ -65,6 +65,17 @@ class Houdini < Formula
       practice: fullscreen YouTube, Netflix, Apple TV+, and Spotify
       hide the bar; fullscreen Terminal doesn't.
 
+      Manual override
+      ---------------------------------------------------------------
+      ⌃⌥⌘H (Ctrl+Option+Cmd+H) flips the menu bar regardless of
+      what the daemon decided — force-hide if showing, force-show
+      if hidden. One-shot: the next real event (frontmost change,
+      fullscreen toggle, AX focus, Now Playing update) yields
+      control back to the daemon.
+
+      Useful when AX title-changed events are delayed or missed
+      and the window-title gate gets stuck on stale state.
+
       Limitations
       ---------------------------------------------------------------
       Window-level matching relies on the playing app putting the

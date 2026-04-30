@@ -19,16 +19,20 @@ enum MenuBarDecision {
         return false
     }
 
+    /// The reason as a short identifier — `hide` or
+    /// `show(<reason>)`. The `→ ` log prefix is added by the
+    /// formatter, not stored here, so consumers that want the bare
+    /// reason (e.g. for a non-log surface) don't have to strip it.
     var tag: String {
         switch self {
-        case .hide: "→ hide"
-        case .showNotFullScreen: "→ show(not_fullscreen)"
-        case .showNotPlaying: "→ show(not_playing)"
-        case .showNoFrontPid: "→ show(no_front_pid)"
-        case .showNoNowPlayingPid: "→ show(no_now_playing_pid)"
-        case .showFrontNotFsOwner: "→ show(front_not_fs_owner)"
-        case .showAppMismatch: "→ show(app_mismatch)"
-        case .showWindowMismatch: "→ show(window_mismatch)"
+        case .hide: "hide"
+        case .showNotFullScreen: "show(not_fullscreen)"
+        case .showNotPlaying: "show(not_playing)"
+        case .showNoFrontPid: "show(no_front_pid)"
+        case .showNoNowPlayingPid: "show(no_now_playing_pid)"
+        case .showFrontNotFsOwner: "show(front_not_fs_owner)"
+        case .showAppMismatch: "show(app_mismatch)"
+        case .showWindowMismatch: "show(window_mismatch)"
         }
     }
 }
@@ -44,9 +48,20 @@ enum EvalTrigger: String {
 }
 
 enum Overrule: String {
-    case none
+    /// Daemon-driven (no manual override active). Spelled `.auto`
+    /// rather than `.none` to avoid shadowing `Optional.none` if
+    /// `Overrule` ever appears wrapped in an Optional.
+    case auto
     case forceHide = "force_hide"
     case forceShow = "force_show"
+}
+
+func effectiveShouldHide(decision: MenuBarDecision, overrule: Overrule) -> Bool {
+    switch overrule {
+    case .forceHide: true
+    case .forceShow: false
+    case .auto: decision.shouldHide
+    }
 }
 
 /// `frontPID.isSameApp(asFSOwnerPID: dockFs.pid)` is the multi-display
@@ -126,7 +141,7 @@ final class Controller: NSObject {
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
         let nowPlayingTitle: String?
-        let overrule: Overrule
+        var overrule: Overrule
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -142,11 +157,7 @@ final class Controller: NSObject {
         }
 
         var effectiveShouldHide: Bool {
-            switch overrule {
-            case .forceHide: true
-            case .forceShow: false
-            case .none: decision.shouldHide
-            }
+            houdini.effectiveShouldHide(decision: decision, overrule: overrule)
         }
     }
 
@@ -157,7 +168,7 @@ final class Controller: NSObject {
     private var nowPlayingBundle: String?
     private var nowPlayingParentBundle: String?
     private var nowPlayingTitle: String?
-    private var overrule: Overrule = .none
+    private var overrule: Overrule = .auto
     private var lastSnapshot: Snapshot?
 
     private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] event in
@@ -178,7 +189,7 @@ final class Controller: NSObject {
     private lazy var axWatcher = AXWatcher { [weak self] name, element in
         guard let self else { return }
         Log.controller.debug(
-            "\(Self.formatAXEvent(name: name, element: element), privacy: .public)",
+            "→ \(Self.formatAXEvent(name: name, element: element), privacy: .public)",
         )
         evaluate(trigger: .window)
     }
@@ -218,7 +229,7 @@ final class Controller: NSObject {
 
     @objc private func onFrontAppChange(_: Notification) {
         let app = NSWorkspace.shared.frontmostApplication
-        Log.controller.debug("\(Self.formatFrontChange(app), privacy: .public)")
+        Log.controller.debug("→ \(Self.formatFrontChange(app), privacy: .public)")
         axWatcher.attach(pid: app?.processIdentifier)
         evaluate(trigger: .frontApp)
     }
@@ -263,13 +274,12 @@ final class Controller: NSObject {
         guard dockFs.isFullScreen,
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return }
-        dockFs = DockFullScreenState(isFullScreen: true, pid: pid)
+        dockFs = DockFullScreenState(isFullScreen: true, pid: FSOwnerPID(pid))
         evaluate(trigger: .dockStay)
     }
 
     private func evaluate(trigger: EvalTrigger) {
-        if trigger != .hotkey { overrule = .none }
-        let snap = takeSnapshot()
+        var snap = takeSnapshot()
 
         // AX events fire on every UI focus move; the focused
         // element's window often reads as nil-title for ~50–500ms
@@ -277,12 +287,19 @@ final class Controller: NSObject {
         // evaluations so the menu bar doesn't flicker on every
         // keystroke / focus shift. Non-AX triggers (front_app,
         // dock_fs, dock_stay, adapter, start) still go through with
-        // nil so legitimate app/state changes aren't lost.
+        // nil so legitimate app/state changes aren't lost. Runs
+        // before the overrule reset so a suppressed event doesn't
+        // silently clear a manual overrule.
         if trigger == .window, snap.frontWindowTitle == nil {
             Log.controller.debug(
                 "→ eval_skipped_no_window trig=\(trigger.rawValue, privacy: .public)",
             )
             return
+        }
+
+        if trigger != .hotkey {
+            overrule = .auto
+            snap.overrule = .auto
         }
 
         guard snap != lastSnapshot else {
@@ -341,20 +358,28 @@ final class Controller: NSObject {
     /// values with spaces are double-quoted so downstream
     /// space-tokenizing parsers see them as one field.
     private func logSnapshot(_ snap: Snapshot, trigger: EvalTrigger) {
+        let head = Self.formatSnapshotHead(snap, trigger: trigger)
+        let np = Self.formatSnapshotNowPlaying(snap)
         Log.controller.info(
-            "\(Self.formatSnapshot(snap, trigger: trigger), privacy: .public)",
+            """
+            → \(head, privacy: .public)
+            → \(np, privacy: .public)
+            """,
         )
     }
 
-    private static func formatSnapshot(_ snap: Snapshot, trigger: EvalTrigger) -> String {
-        // Two lines because the single-line form wrapped on most
-        // terminals once full bundles + parent + resp were included.
+    private static func formatSnapshotHead(_ snap: Snapshot, trigger: EvalTrigger) -> String {
+        let tag = snap.decision.tag
+        let trig = trigger.rawValue
+        let overrule = snap.overrule.rawValue
+        return """
+        \(tag)  trig=\(trig) overrule=\(overrule) \
+        appMatch=\(formatAppMatch(snap)) front_tx=\(formatFront(snap))
         """
-        \(snap.decision.tag)  trig=\(trigger
-            .rawValue) overrule=\(snap.overrule
-            .rawValue) appMatch=\(formatAppMatch(snap)) front_tx=\(formatFront(snap))
-        → np_tx=\(formatNowPlaying(snap))
-        """
+    }
+
+    private static func formatSnapshotNowPlaying(_ snap: Snapshot) -> String {
+        "np_tx=\(formatNowPlaying(snap))"
     }
 
     /// Which gate-7 path matched (process / bundle / both / none) —
@@ -379,8 +404,8 @@ final class Controller: NSObject {
     private static func formatFrontChange(_ app: NSRunningApplication?) -> String {
         let pid = formatNullable(app?.processIdentifier)
         let bundle = formatNullableString(app?.bundleIdentifier)
-        let name = quoteString(app?.localizedName ?? "(unknown)")
-        return "→ front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
+        let name = quoted(app?.localizedName ?? "(unknown)")
+        return "front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
     }
 
     /// One line per AX notification, with the focused element's
@@ -389,19 +414,19 @@ final class Controller: NSObject {
     private static func formatAXEvent(name: String, element: AXUIElement) -> String {
         let app = NSWorkspace.shared.frontmostApplication
         let pid = app?.processIdentifier ?? 0
-        let appName = quoteString(app?.localizedName ?? "(unknown)")
-        let title = quoteString(windowTitle(forElement: element) ?? "")
-        return "→ ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
+        let appName = quoted(app?.localizedName ?? "(unknown)")
+        let title = quoted(windowTitle(forElement: element) ?? "")
+        return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
 
     private static func formatFront(_ snap: Snapshot) -> String {
         let head = bundleShort(snap.frontBundle) ?? ""
         let pid = formatNullable(snap.frontPID?.rawValue)
-        let name = quoteString(snap.frontName)
+        let name = quoted(snap.frontName)
         let bundle = formatNullableString(snap.frontBundle)
         let resp = formatNullable(snap.frontPID?.responsiblePID)
         let fs = snap.dockFs.isFullScreen ? "yes" : "no"
-        let fsPid = formatNullable(snap.dockFs.pid)
+        let fsPid = formatNullable(snap.dockFs.pid?.rawValue)
         let win = formatNullableString(snap.frontWindowTitle)
         let probe = snap.frontWindowProbeStatus.rawValue
         return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win),probe=\(probe)]"
@@ -451,7 +476,7 @@ final class Controller: NSObject {
 
     /// Always quote — `name` is a free-form display string that may
     /// contain spaces, parens, or LTR markers. Embedded `"` is escaped.
-    private static func quoteString(_ value: String) -> String {
+    private static func quoted(_ value: String) -> String {
         "\"\(escapeQuotes(value))\""
     }
 

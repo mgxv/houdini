@@ -18,7 +18,7 @@ struct DockSpaceWatcherTests {
         appName=Ghostty name=~/Desktop space=CGSSpace(spid: 141)}]
         """
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: true, pid: 4796)))
+            == .fullScreenState(.init(isFullScreen: true, pid: FSOwnerPID(4796))))
     }
 
     @Test("Split View: emits fullscreen=true with the first tile pid")
@@ -33,7 +33,7 @@ struct DockSpaceWatcherTests {
         appName=Safari name=YouTube space=CGSSpace(spid: 398)}]
         """
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: true, pid: 1738)))
+            == .fullScreenState(.init(isFullScreen: true, pid: FSOwnerPID(1738))))
     }
 
     @Test("Exit fullscreen: ManagedSpace line → fullscreen=false, no pid")
@@ -51,7 +51,7 @@ struct DockSpaceWatcherTests {
         // Captured in the wild: some exit messages do carry a pid.
         let line = "Space Forces Hidden: 0 fullscreen=false pid=36772"
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: false, pid: 36772)))
+            == .fullScreenState(.init(isFullScreen: false, pid: FSOwnerPID(36772))))
     }
 
     @Test("Stay-space-change: maps to .staySpaceChange")
