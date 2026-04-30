@@ -209,13 +209,14 @@ step "Compiling $BINARY"
 SWIFT_SOURCES=(Sources/*.swift)
 [ ${#SWIFT_SOURCES[@]} -gt 0 ] || die "no .swift sources found under Sources/"
 info "target: ${HOST_ARCH}-apple-macos${MIN_MACOS} — optimization: -O"
-info "libs:   Cocoa"
+info "libs:   Cocoa, Carbon"
 info "Swift:  language mode 6 (strict concurrency)"
 swiftc -O \
     -swift-version 6 \
     -target "${HOST_ARCH}-apple-macos${MIN_MACOS}" \
     -o "$BINARY" "${SWIFT_SOURCES[@]}" \
-    -framework Cocoa
+    -framework Cocoa \
+    -framework Carbon
 ok "linked $BINARY ($(hsize "$BINARY"), ${#SWIFT_SOURCES[@]} .swift files)"
 
 # ---------------------------------------------------------------------------

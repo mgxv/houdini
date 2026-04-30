@@ -40,6 +40,13 @@ enum EvalTrigger: String {
     case dockStay = "dock_stay"
     case adapter
     case window
+    case hotkey
+}
+
+enum Overrule: String {
+    case none
+    case forceHide = "force_hide"
+    case forceShow = "force_show"
 }
 
 /// `frontPID.isSameApp(asFSOwnerPID: dockFs.pid)` is the multi-display
@@ -119,6 +126,7 @@ final class Controller: NSObject {
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
         let nowPlayingTitle: String?
+        let overrule: Overrule
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -132,6 +140,14 @@ final class Controller: NSObject {
                 nowPlayingTitle: nowPlayingTitle,
             )
         }
+
+        var effectiveShouldHide: Bool {
+            switch overrule {
+            case .forceHide: true
+            case .forceShow: false
+            case .none: decision.shouldHide
+            }
+        }
     }
 
     private let menuBar: MenuBarToggler
@@ -141,6 +157,7 @@ final class Controller: NSObject {
     private var nowPlayingBundle: String?
     private var nowPlayingParentBundle: String?
     private var nowPlayingTitle: String?
+    private var overrule: Overrule = .none
     private var lastSnapshot: Snapshot?
 
     private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] event in
@@ -166,6 +183,10 @@ final class Controller: NSObject {
         evaluate(trigger: .window)
     }
 
+    private lazy var hotkeyWatcher = HotkeyWatcher { [weak self] in
+        self?.toggleOverrule()
+    }
+
     init(menuBar: MenuBarToggler) {
         self.menuBar = menuBar
         super.init()
@@ -182,6 +203,7 @@ final class Controller: NSObject {
         )
         try dockSpaceWatcher.start()
         axWatcher.attach(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        _ = hotkeyWatcher.start()
         evaluate(trigger: .start)
     }
 
@@ -190,6 +212,7 @@ final class Controller: NSObject {
     func stop() {
         dockSpaceWatcher.stop()
         axWatcher.detach()
+        hotkeyWatcher.stop()
     }
 
     @objc private func onFrontAppChange(_: Notification) {
@@ -197,6 +220,12 @@ final class Controller: NSObject {
         Log.controller.debug("\(Self.formatFrontChange(app), privacy: .public)")
         axWatcher.attach(pid: app?.processIdentifier)
         evaluate(trigger: .frontApp)
+    }
+
+    private func toggleOverrule() {
+        let hidden = lastSnapshot?.effectiveShouldHide ?? false
+        overrule = hidden ? .forceShow : .forceHide
+        evaluate(trigger: .hotkey)
     }
 
     func updateMedia(_ snapshot: NowPlayingSnapshot) {
@@ -238,6 +267,7 @@ final class Controller: NSObject {
     }
 
     private func evaluate(trigger: EvalTrigger) {
+        if trigger != .hotkey { overrule = .none }
         let snap = takeSnapshot()
 
         // AX events fire on every UI focus move; the focused
@@ -262,7 +292,7 @@ final class Controller: NSObject {
         }
         lastSnapshot = snap
 
-        menuBar.apply(shouldHide: snap.decision.shouldHide)
+        menuBar.apply(shouldHide: snap.effectiveShouldHide)
         logSnapshot(snap, trigger: trigger)
     }
 
@@ -295,6 +325,7 @@ final class Controller: NSObject {
             nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
             nowPlayingTitle: nowPlayingTitle,
+            overrule: overrule,
         )
     }
 
@@ -319,6 +350,7 @@ final class Controller: NSObject {
         // terminals once full bundles + parent + resp were included.
         """
         \(snap.decision.tag)  trig=\(trigger
+            .rawValue) overrule=\(snap.overrule
             .rawValue) appMatch=\(formatAppMatch(snap)) front_tx=\(formatFront(snap))
         → np_tx=\(formatNowPlaying(snap))
         """
