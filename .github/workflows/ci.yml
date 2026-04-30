@@ -4,9 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   lint:
@@ -26,7 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: raven-actions/actionlint@v2
+      - name: Run actionlint
+        run: |
+          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
 
   formula:
     name: Formula audit
@@ -50,7 +58,6 @@ jobs:
         run: |
           xcode-select -p
           swift --version
-          swiftc --version
       - name: SwiftPM build
         run: swift build
       - name: scripts/build.sh
@@ -60,36 +67,32 @@ jobs:
           ./houdini help
           ./houdini version
 
-  # One job per matrix variant, run in parallel. Each variant exercises
-  # a different compile-time invariant: TSan for actor/concurrency races,
-  # ASan for memory issues, and a warnings-as-errors release build to
-  # catch any swiftc warning that slipped past local checks.
-  sanitize:
-    name: ${{ matrix.name }}
+  tests:
+    name: Tests
     runs-on: macos-15
-    strategy:
-      # Surface every variant's result rather than aborting on the first
-      # failure — sanitizer regressions and warning regressions are
-      # independent failure modes.
-      fail-fast: false
-      matrix:
-        include:
-          - name: Thread sanitizer
-            config: ""
-            extra: "-Xswiftc -sanitize=thread"
-          - name: Address sanitizer
-            config: ""
-            extra: "-Xswiftc -sanitize=address"
-          - name: Release (warnings-as-errors)
-            config: "-c release"
-            extra: "-Xswiftc -warnings-as-errors"
     steps:
       - uses: actions/checkout@v5
       - name: Show toolchain
         run: swift --version
-      - name: swift build ${{ matrix.config }} ${{ matrix.extra }}
-        run: |
-          swift build ${{ matrix.config }} \
-            -Xswiftc -swift-version -Xswiftc 6 \
-            -Xswiftc -strict-concurrency=complete \
-            ${{ matrix.extra }}
+      - name: swift test
+        run: swift test -Xswiftc -swift-version -Xswiftc 6 -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+
+  sanitize:
+    name: ${{ matrix.name }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Thread sanitizer
+            args: -Xswiftc -sanitize=thread
+          - name: Address sanitizer
+            args: -Xswiftc -sanitize=address
+          - name: Release (warnings-as-errors)
+            args: -c release -Xswiftc -warnings-as-errors
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show toolchain
+        run: swift --version
+      - name: swift build
+        run: swift build ${{ matrix.args }} -Xswiftc -swift-version -Xswiftc 6 -Xswiftc -strict-concurrency=complete

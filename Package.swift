@@ -16,5 +16,13 @@ let package = Package(
                 .swiftLanguageMode(.v6),
             ],
         ),
+        .testTarget(
+            name: "Tests",
+            dependencies: ["houdini"],
+            path: "Tests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+            ],
+        ),
     ],
 )
