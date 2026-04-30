@@ -10,7 +10,7 @@ import os
 enum Log {
     static let subsystem = "com.github.mgxv.houdini"
 
-    /// HIDE/SHOW snapshots (info) and parsed `dock_visibility`
+    /// hide/show snapshots (info) and parsed `dock_rx`
     /// events (debug).
     static let controller = Logger(subsystem: subsystem, category: "controller")
 

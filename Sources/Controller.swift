@@ -21,14 +21,14 @@ enum MenuBarDecision {
 
     var tag: String {
         switch self {
-        case .hide: "→ HIDE"
-        case .showNotFullScreen: "→ SHOW(not_fullscreen)"
-        case .showNotPlaying: "→ SHOW(not_playing)"
-        case .showNoFrontPid: "→ SHOW(no_front_pid)"
-        case .showNoNowPlayingPid: "→ SHOW(no_now_playing_pid)"
-        case .showFrontNotFsOwner: "→ SHOW(front_not_fs_owner)"
-        case .showAppMismatch: "→ SHOW(app_mismatch)"
-        case .showWindowMismatch: "→ SHOW(window_mismatch)"
+        case .hide: "→ hide"
+        case .showNotFullScreen: "→ show(not_fullscreen)"
+        case .showNotPlaying: "→ show(not_playing)"
+        case .showNoFrontPid: "→ show(no_front_pid)"
+        case .showNoNowPlayingPid: "→ show(no_now_playing_pid)"
+        case .showFrontNotFsOwner: "→ show(front_not_fs_owner)"
+        case .showAppMismatch: "→ show(app_mismatch)"
+        case .showWindowMismatch: "→ show(window_mismatch)"
         }
     }
 }
@@ -154,7 +154,7 @@ final class Controller: NSObject {
     /// watcher is a no-op and the daemon degrades to process-level
     /// matching only.
     ///
-    /// Each event is logged as `→ AX_EVENT` for diagnostics — useful
+    /// Each event is logged as `→ ax_rx` for diagnostics — useful
     /// when the daemon's decision and the user's perception disagree
     /// (e.g. background-tab webview activity firing focus events
     /// against a non-visible window in Chrome).
@@ -249,14 +249,14 @@ final class Controller: NSObject {
         // nil so legitimate app/state changes aren't lost.
         if trigger == .window, snap.frontWindowTitle == nil {
             Log.controller.debug(
-                "eval_suppressed_null_window trig=\(trigger.rawValue, privacy: .public)",
+                "→ eval_skipped_no_window trig=\(trigger.rawValue, privacy: .public)",
             )
             return
         }
 
         guard snap != lastSnapshot else {
             Log.controller.debug(
-                "eval_suppressed trig=\(trigger.rawValue, privacy: .public)",
+                "→ eval_skipped trig=\(trigger.rawValue, privacy: .public)",
             )
             return
         }
@@ -300,18 +300,18 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   {HIDE|SHOW(reason)}  trig=<src> front=<head>[pid=…,name=…,bundle=…,fs=…,fsPid=…]
-    ///   np=<head>[pid=…,bundle=…,parent=…,resp=…,play=…]
+    ///   → {hide|show(reason)}  trig=<src>  appMatch=<…> 
+    /// front_tx=<head>[pid=…,name=…,bundle=…,fs=…,fsPid=…]
+    ///   → np_tx=<head>[pid=…,bundle=…,parent=…,resp=…,play=…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
     /// `WebKit.GPU`) — a visual anchor for scanning. Missing
     /// optionals render as `null` (preserving absent-vs-empty);
     /// values with spaces are double-quoted so downstream
-    /// space-tokenizing parsers see them as one field. Leading `\n`
-    /// pushes the body onto its own row under the unified-log prefix.
+    /// space-tokenizing parsers see them as one field.
     private func logSnapshot(_ snap: Snapshot, trigger: EvalTrigger) {
         Log.controller.info(
-            "\n\(Self.formatSnapshot(snap, trigger: trigger), privacy: .public)",
+            "\(Self.formatSnapshot(snap, trigger: trigger), privacy: .public)",
         )
     }
 
@@ -320,8 +320,8 @@ final class Controller: NSObject {
         // terminals once full bundles + parent + resp were included.
         """
         \(snap.decision.tag)  trig=\(trigger
-            .rawValue) appMatch=\(formatAppMatch(snap)) front=\(formatFront(snap))
-        → NP=\(formatNowPlaying(snap))
+            .rawValue) appMatch=\(formatAppMatch(snap)) front_tx=\(formatFront(snap))
+        → np_tx=\(formatNowPlaying(snap))
         """
     }
 
@@ -348,18 +348,18 @@ final class Controller: NSObject {
         let pid = formatNullable(app?.processIdentifier)
         let bundle = formatNullableString(app?.bundleIdentifier)
         let name = quoteString(app?.localizedName ?? "(unknown)")
-        return "front_change pid=\(pid) bundle=\(bundle) name=\(name)"
+        return "→ front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
     }
 
     /// One line per AX notification, with the focused element's
     /// containing window title surfaced — lets you correlate a
-    /// HIDE/SHOW decision to the AX event that triggered it.
+    /// hide/show decision to the AX event that triggered it.
     private static func formatAXEvent(name: String, element: AXUIElement) -> String {
         let app = NSWorkspace.shared.frontmostApplication
         let pid = app?.processIdentifier ?? 0
         let appName = quoteString(app?.localizedName ?? "(unknown)")
         let title = quoteString(windowTitle(forElement: element) ?? "")
-        return "→ AX_EVENT name=\(name) app=\(appName) pid=\(pid) window=\(title)"
+        return "→ ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
 
     private static func formatFront(_ snap: Snapshot) -> String {

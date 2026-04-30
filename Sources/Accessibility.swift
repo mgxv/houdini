@@ -37,7 +37,7 @@ private func _AXUIElementGetWindow(
 ) -> AXError
 
 /// Why a `visibleWindowTitle` probe ended up with the title it did.
-/// The decision treats every non-`ok` case as nil (lenient HIDE);
+/// The decision treats every non-`ok` case as nil (lenient hide);
 /// the split is for the log only.
 enum WindowTitleProbeStatus: String {
     case ok // got a non-empty title

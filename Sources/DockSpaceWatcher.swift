@@ -90,7 +90,7 @@ final class DockSpaceWatcher {
             }
         }
 
-        // Unexpected exit is fatal — degraded operation (always SHOW)
+        // Unexpected exit is fatal — degraded operation (always show)
         // is worse than a launchd-orchestrated restart. The
         // `stopping` check distinguishes graceful shutdown.
         process.terminationHandler = { [weak self] proc in
@@ -126,10 +126,10 @@ final class DockSpaceWatcher {
             case let .fullScreenState(state):
                 let pidField = state.pid.map { "\($0)" } ?? "null"
                 Log.controller.debug(
-                    "dock_visibility fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
+                    "→ dock_rx fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
                 )
             case .staySpaceChange:
-                Log.controller.debug("dock_visibility stay_space_change")
+                Log.controller.debug("→ dock_rx stay_space_change")
             }
             onUpdate(event)
         }
@@ -143,7 +143,7 @@ final class DockSpaceWatcher {
     /// unreliably and isn't a source of FS-ness truth.
     ///
     /// `Space Forces Hidden:` exit messages omit the pid and surface
-    /// as `pid=nil`, which `shouldHideMenuBar`'s non-nil pid guard
+    /// as `pid=nil`, which `menuBarDecision`'s non-nil pid guard
     /// then rejects.
     nonisolated static func parse(_ line: String) -> DockSpaceEvent? {
         if line.contains("Skipping no-op state update") {
