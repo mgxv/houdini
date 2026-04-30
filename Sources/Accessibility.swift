@@ -36,6 +36,23 @@ private func _AXUIElementGetWindow(
     _ windowID: UnsafeMutablePointer<CGWindowID>,
 ) -> AXError
 
+/// Why a `visibleWindowTitle` probe ended up with the title it did.
+/// The decision treats every non-`ok` case as nil (lenient HIDE);
+/// the split is for the log only.
+enum WindowTitleProbeStatus: String {
+    case ok // got a non-empty title
+    case skipped // caller didn't probe (short-circuit)
+    case denied // AX permission denied
+    case empty // probe ran, no usable title
+}
+
+struct WindowTitleProbe {
+    let title: String?
+    let status: WindowTitleProbeStatus
+
+    static let skipped = WindowTitleProbe(title: nil, status: .skipped)
+}
+
 /// Title of the topmost on-screen window for `pid` whose AX title is
 /// non-empty. CGWindowList is z-ordered front-to-back, so we walk
 /// down it and return the first match — needed because AX-focused
@@ -43,13 +60,15 @@ private func _AXUIElementGetWindow(
 /// in fullscreen mode some apps (Chrome) put a titleless helper
 /// window ahead of the actual content window in z-order.
 @MainActor
-func visibleWindowTitle(for pid: pid_t?) -> String? {
-    guard let pid, pid > 0 else { return nil }
+func visibleWindowTitle(for pid: pid_t?) -> WindowTitleProbe {
+    guard let pid, pid > 0 else {
+        return WindowTitleProbe(title: nil, status: .empty)
+    }
 
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let infos = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
         as? [[String: Any]]
-    else { return nil }
+    else { return WindowTitleProbe(title: nil, status: .empty) }
 
     let candidateIDs: [CGWindowID] = infos.compactMap { info in
         guard let owner = info[kCGWindowOwnerPID as String] as? pid_t, owner == pid,
@@ -57,14 +76,22 @@ func visibleWindowTitle(for pid: pid_t?) -> String? {
         else { return nil }
         return id
     }
-    guard !candidateIDs.isEmpty else { return nil }
+    guard !candidateIDs.isEmpty else {
+        return WindowTitleProbe(title: nil, status: .empty)
+    }
 
     let app = AXUIElementCreateApplication(pid)
     var windowsRef: AnyObject?
-    guard AXUIElementCopyAttributeValue(
+    let axStatus = AXUIElementCopyAttributeValue(
         app, kAXWindowsAttribute as CFString, &windowsRef,
-    ) == .success, let windows = windowsRef as? [AXUIElement]
-    else { return nil }
+    )
+    if axStatus == .apiDisabled {
+        noteAXError(axStatus)
+        return WindowTitleProbe(title: nil, status: .denied)
+    }
+    guard axStatus == .success, let windows = windowsRef as? [AXUIElement] else {
+        return WindowTitleProbe(title: nil, status: .empty)
+    }
 
     // Map AX windows by CGWindowID once — drops the SPI count from
     // O(candidates × windows) to O(windows) for apps with many windows.
@@ -88,9 +115,9 @@ func visibleWindowTitle(for pid: pid_t?) -> String? {
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !title.isEmpty
         else { continue }
-        return title
+        return WindowTitleProbe(title: title, status: .ok)
     }
-    return nil
+    return WindowTitleProbe(title: nil, status: .empty)
 }
 
 /// Walks from any AX element up to its enclosing window and returns
