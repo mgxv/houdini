@@ -172,7 +172,8 @@ This is a fallback for the unreliability of `kAXTitleChangedNotification`, which
 ```bash
 houdini status                    # print version, daemon state,
                                   # adapter/dock-log subprocess health,
-                                  # and Accessibility permission
+                                  # hotkey registration, and
+                                  # Accessibility permission
 houdini logs                      # stream every houdini unified-log entry
                                   # across all categories at debug level
                                   # (controller decisions, dock-visibility
@@ -183,7 +184,7 @@ houdini version                   # print version
 houdini help                      # full usage
 ```
 
-`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, whether the daemon's two subprocesses (`mediaremote-adapter` and the Dock-log `log stream`) are alive, and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon isn't running, so it composes in scripts. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
+`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, whether the daemon's two subprocesses (`mediaremote-adapter` and the Dock-log `log stream`) are alive, whether the [Manual override](#manual-override) hotkey registered (`registered` / `failed` / `unknown` if the daemon hasn't recorded its state yet — usually means restart it), and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon isn't running, so it composes in scripts. The hotkey and accessibility lines don't affect the exit code — both are graceful-degradation features. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 

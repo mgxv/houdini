@@ -87,11 +87,13 @@ func runStatus() -> Never {
     let daemonRunning = probeDaemonRunning()
     let adapterAlive = subprocessAlive(matching: #"mediaremote-adapter.pl.*MediaRemoteAdapter.framework"#) // swiftformat:disable all
     let dockLogAlive = subprocessAlive(matching: #"log stream.*dock-visibility"#)
+    let hotkeyState = daemonRunning ? (HotkeyState.read() ?? "unknown") : "n/a"
     let axTrusted = isAccessibilityTrusted()
     print("version:        \(version)")
     print("daemon:         \(daemonRunning ? "running" : "not running")")
     print("adapter:        \(adapterAlive ? "running" : "not running")")
     print("dock log:       \(dockLogAlive ? "running" : "not running")")
+    print("hotkey:         \(hotkeyState)")
     print("accessibility:  \(axTrusted ? "granted" : "not granted")")
     let healthy = daemonRunning && adapterAlive && dockLogAlive
     exit(healthy ? 0 : 1)
@@ -182,9 +184,10 @@ func usage() {
     Usage:
       houdini                   Run the daemon (invoked by brew services)
       houdini status            Print version, daemon state, adapter
-                                + dock-log subprocess health, and
-                                Accessibility permission. Exits non-
-                                zero if the daemon isn't running.
+                                + dock-log subprocess health, hotkey
+                                registration, and Accessibility
+                                permission. Exits non-zero if the
+                                daemon isn't running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility

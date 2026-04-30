@@ -12,11 +12,11 @@ final class HotkeyWatcher {
         let modifiers: UInt32
     }
 
-    /// Cmd+Ctrl+Option+H — three modifiers keeps it clear of app
-    /// bindings (Cmd+H is "hide app", Cmd+Option+H is "hide others").
+    /// ⌃⌥⌘H — three modifiers keeps it clear of app bindings
+    /// (⌘H is "hide app", ⌥⌘H is "hide others").
     static let defaultChord = Chord(
         keyCode: UInt32(kVK_ANSI_H),
-        modifiers: UInt32(controlKey | cmdKey | optionKey),
+        modifiers: UInt32(controlKey | optionKey | cmdKey),
     )
 
     private let onPress: @MainActor () -> Void
@@ -70,7 +70,7 @@ final class HotkeyWatcher {
             refcon, &handlerRef,
         )
         guard installErr == noErr else {
-            warn("hotkey: InstallEventHandler failed (status \(installErr))")
+            warn("hotkey: InstallEventHandler failed — \(Self.describe(installErr))")
             return false
         }
 
@@ -80,7 +80,7 @@ final class HotkeyWatcher {
             GetApplicationEventTarget(), 0, &hotKeyRef,
         )
         guard regErr == noErr else {
-            warn("hotkey: RegisterEventHotKey failed (status \(regErr))")
+            warn("hotkey: RegisterEventHotKey failed — \(Self.describe(regErr))")
             if let h = handlerRef {
                 RemoveEventHandler(h)
                 handlerRef = nil
@@ -88,6 +88,15 @@ final class HotkeyWatcher {
             return false
         }
         return true
+    }
+
+    private static func describe(_ status: OSStatus) -> String {
+        switch Int(status) {
+        case eventHotKeyExistsErr: "chord already registered by another app (status \(status))"
+        case eventHotKeyInvalidErr: "invalid chord (status \(status))"
+        case paramErr: "invalid parameter (status \(status))"
+        default: "status \(status)"
+        }
     }
 
     func stop() {
@@ -99,5 +108,39 @@ final class HotkeyWatcher {
             RemoveEventHandler(h)
             handlerRef = nil
         }
+    }
+}
+
+enum HotkeyState {
+    private static func url() -> URL? {
+        guard let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false,
+        ) else { return nil }
+        return appSupport
+            .appendingPathComponent(Log.subsystem, isDirectory: true)
+            .appendingPathComponent("hotkey.state")
+    }
+
+    static func write(_ state: String) {
+        guard let url = url() else { return }
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+        )
+        try? state.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    static func read() -> String? {
+        guard let url = url() else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func clear() {
+        guard let url = url() else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 }

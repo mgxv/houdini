@@ -203,7 +203,7 @@ final class Controller: NSObject {
         )
         try dockSpaceWatcher.start()
         axWatcher.attach(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
-        _ = hotkeyWatcher.start()
+        HotkeyState.write(hotkeyWatcher.start() ? "registered" : "failed")
         evaluate(trigger: .start)
     }
 
@@ -213,6 +213,7 @@ final class Controller: NSObject {
         dockSpaceWatcher.stop()
         axWatcher.detach()
         hotkeyWatcher.stop()
+        HotkeyState.clear()
     }
 
     @objc private func onFrontAppChange(_: Notification) {
