@@ -260,22 +260,6 @@ brew services start houdini
 
 </details>
 
-## Project layout
-
-```
-scripts/              # Build and release scripts
-  build.sh            # Builds the framework + Swift binary (canonical path)
-  release.sh          # Version bump → tag → formula update → tap mirror
-Formula/houdini.rb    # Homebrew formula
-Package.swift         # Optional SwiftPM manifest (for IDE indexing)
-Sources/              # Swift daemon + CLI (Swift 6, strict concurrency)
-Sources/Version.swift # Single source of truth for the version string
-MIN_MACOS             # Single source of truth for the macOS deployment floor
-                      #   (read by build.sh + Package.swift; release.sh
-                      #   validates; Formula/houdini.rb is hand-maintained)
-vendor/               # mediaremote-adapter (Obj-C + Perl shim)
-```
-
 ## Acknowledgements
 
 houdini is built on top of [**mediaremote-adapter**](https://github.com/ungive/mediaremote-adapter) by [Jonas van den Berg (@ungive)](https://github.com/ungive). Without it, there would be no practical way for an unentitled binary to observe Now Playing state on modern macOS. Huge thanks to Jonas and the project's contributors.
