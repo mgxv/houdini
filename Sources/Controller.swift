@@ -110,6 +110,9 @@ final class Controller: NSObject {
         let frontName: String
         let frontBundle: String?
         let frontWindowTitle: String?
+        /// Diagnostic only — splits a nil title into skipped / denied /
+        /// empty / ok in the log so it's debuggable beyond just "nil."
+        let frontWindowProbeStatus: WindowTitleProbeStatus
         let dockFs: DockFullScreenState
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
@@ -276,15 +279,16 @@ final class Controller: NSObject {
             && isPlaying
             && frontPID != nil
             && nowPlayingPID != nil
-        let frontWindowTitle = needsTitle
+        let probe: WindowTitleProbe = needsTitle
             ? visibleWindowTitle(for: frontApp?.processIdentifier)
-            : nil
+            : .skipped
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
             frontBundle: frontBundle,
-            frontWindowTitle: frontWindowTitle,
+            frontWindowTitle: probe.title,
+            frontWindowProbeStatus: probe.status,
             dockFs: dockFs,
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
@@ -315,9 +319,29 @@ final class Controller: NSObject {
         // Two lines because the single-line form wrapped on most
         // terminals once full bundles + parent + resp were included.
         """
-        \(snap.decision.tag)  trig=\(trigger.rawValue) front=\(formatFront(snap))
+        \(snap.decision.tag)  trig=\(trigger
+            .rawValue) appMatch=\(formatAppMatch(snap)) front=\(formatFront(snap))
         → NP=\(formatNowPlaying(snap))
         """
+    }
+
+    /// Which gate-7 path matched (process / bundle / both / none) —
+    /// `n/a` if a pid was missing. Diagnostic, computed alongside the
+    /// decision rather than returned from it.
+    private static func formatAppMatch(_ snap: Snapshot) -> String {
+        guard let frontPID = snap.frontPID, let npPID = snap.nowPlayingPID else { return "n/a" }
+        let process = frontPID.isSameProcess(as: npPID)
+        let bundle: Bool = if let parent = snap.nowPlayingParentBundle, !parent.isEmpty {
+            parent == snap.frontBundle
+        } else {
+            false
+        }
+        switch (process, bundle) {
+        case (true, true): return "both"
+        case (true, false): return "process"
+        case (false, true): return "bundle"
+        case (false, false): return "none"
+        }
     }
 
     private static func formatFrontChange(_ app: NSRunningApplication?) -> String {
@@ -347,7 +371,8 @@ final class Controller: NSObject {
         let fs = snap.dockFs.isFullScreen ? "yes" : "no"
         let fsPid = formatNullable(snap.dockFs.pid)
         let win = formatNullableString(snap.frontWindowTitle)
-        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win)]"
+        let probe = snap.frontWindowProbeStatus.rawValue
+        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win),probe=\(probe)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
