@@ -67,7 +67,7 @@ class Houdini < Formula
 
       Manual override
       ---------------------------------------------------------------
-      ⌃⌥⌘H (Ctrl+Option+Cmd+H) flips the menu bar regardless of
+      ⌃⌥⌘M (Ctrl+Option+Cmd+M) flips the menu bar regardless of
       what the daemon decided — force-hide if showing, force-show
       if hidden. One-shot: the next real event (frontmost change,
       fullscreen toggle, AX focus, Now Playing update) yields

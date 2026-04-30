@@ -23,8 +23,8 @@ jobs:
         run: command -v swiftformat >/dev/null || brew install swiftformat
       - name: Show versions
         run: swiftformat --version
-      - name: Lint Sources/
-        run: swiftformat --lint Sources/
+      - name: Lint Sources/ + Tests/
+        run: swiftformat --lint Sources/ Tests/
 
   actionlint:
     name: actionlint
@@ -62,6 +62,8 @@ jobs:
         run: swift build
       - name: scripts/build.sh
         run: ./scripts/build.sh
+      - name: Adapter framework smoke test
+        run: perl vendor/mediaremote-adapter/bin/mediaremote-adapter.pl "$PWD/MediaRemoteAdapter.framework" get --no-artwork > /dev/null
       - name: Smoke test
         run: |
           ./houdini help

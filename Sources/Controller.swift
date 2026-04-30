@@ -277,15 +277,14 @@ final class Controller: NSObject {
     private func evaluate(trigger: EvalTrigger) {
         var snap = takeSnapshot()
 
-        // AX events fire on every UI focus move; the focused
-        // element's window often reads as nil-title for ~50–500ms
-        // during normal interaction. Suppress AX-driven nil-title
-        // evaluations so the menu bar doesn't flicker on every
-        // keystroke / focus shift. Non-AX triggers (front_app,
+        // AX fires on every focus move; the focused window's title
+        // often reads nil for ~50–500ms during normal interaction.
+        // Suppress AX nil-title evals so the bar doesn't flicker on
+        // every keystroke / focus shift. Non-AX triggers (front_app,
         // dock_fs, dock_stay, adapter, start) still go through with
-        // nil so legitimate app/state changes aren't lost. Runs
-        // before the overrule reset so a suppressed event doesn't
-        // silently clear a manual overrule.
+        // nil so legitimate app/state changes aren't lost. Runs before
+        // the overrule reset so a suppressed event doesn't silently
+        // clear a manual overrule.
         if trigger == .window, snap.frontWindowTitle == nil {
             Log.controller.debug(
                 "→ eval_skipped_no_window trig=\(trigger.rawValue, privacy: .public)",

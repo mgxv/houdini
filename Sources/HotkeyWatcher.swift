@@ -1,6 +1,9 @@
 // Global hotkey via Carbon's RegisterEventHotKey. Consumes the chord
 // (vs. NSEvent global monitor, which doesn't) and works without AX
 // trust — useful on a fresh install before the user grants it.
+//
+// Dispatch needs NSApp.run (see runForeground); registers on the
+// event dispatcher target so events bypass the application queue.
 
 import Carbon.HIToolbox
 import Cocoa
@@ -12,10 +15,10 @@ final class HotkeyWatcher {
         let modifiers: UInt32
     }
 
-    /// ⌃⌥⌘H — three modifiers keeps it clear of app bindings
-    /// (⌘H is "hide app", ⌥⌘H is "hide others").
+    /// ⌃⌥⌘M — three modifiers keeps it clear of app bindings
+    /// (⌘M is "minimize", ⌥⌘M is "minimize all").
     static let defaultChord = Chord(
-        keyCode: UInt32(kVK_ANSI_H),
+        keyCode: UInt32(kVK_ANSI_M),
         modifiers: UInt32(controlKey | optionKey | cmdKey),
     )
 
@@ -64,7 +67,7 @@ final class HotkeyWatcher {
         }
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let installErr = InstallEventHandler(
-            GetApplicationEventTarget(),
+            GetEventDispatcherTarget(),
             callback,
             1, &spec,
             refcon, &handlerRef,
@@ -77,7 +80,7 @@ final class HotkeyWatcher {
         let hkID = EventHotKeyID(signature: Self.signature, id: Self.id)
         let regErr = RegisterEventHotKey(
             chord.keyCode, chord.modifiers, hkID,
-            GetApplicationEventTarget(), 0, &hotKeyRef,
+            GetEventDispatcherTarget(), 0, &hotKeyRef,
         )
         guard regErr == noErr else {
             warn("hotkey: RegisterEventHotKey failed — \(Self.describe(regErr))")
