@@ -184,7 +184,7 @@ houdini version                   # print version
 houdini help                      # full usage
 ```
 
-`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, whether the daemon's two subprocesses (`mediaremote-adapter` and the Dock-log `log stream`) are alive, whether the [Manual override](#manual-override) hotkey registered (`registered` / `failed` / `unknown` if the daemon hasn't recorded its state yet — usually means restart it), and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon isn't running, so it composes in scripts. The hotkey and accessibility lines don't affect the exit code — both are graceful-degradation features. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
+`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, whether the daemon's two subprocesses (`mediaremote-adapter` and the Dock-log `log stream`) are alive, whether the [Manual override](#manual-override) hotkey registered (`registered` / `failed` / `unknown` if the daemon hasn't recorded its state yet — usually means restart it), and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon or either subprocess isn't running, so it composes in scripts. The hotkey and accessibility lines don't affect the exit code — both are graceful-degradation features. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
 
 Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
 
@@ -215,11 +215,11 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a hide/show snapshot with the inputs that drove it:
 
 ```
-→ hide  trig=adapter front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube"]
+→ hide  trig=adapter overrule=auto appMatch=process front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube",probe=ok]
 → np_tx=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
 ```
 
-The leading verb is `→ hide` or `→ show(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, or `window_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, or `window` (an AX focus/title event). `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app process check actually compares. `win=` is the focused window's AX title; `title=` on the np line is the Now Playing track title — the window-level refinement does a substring match between them.
+The leading verb is `→ hide` or `→ show(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, or `window_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `window` (an AX focus/title event), or `hotkey` (manual override). `overrule=` is `auto` (daemon-driven), `force_hide`, or `force_show` (the hotkey's one-shot override is in effect). `appMatch=` is `process`, `bundle`, `both`, or `none` — which gate-6 path matched. `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app process check actually compares. `win=` is the focused window's AX title; `title=` on the np line is the Now Playing track title — the window-level refinement does a substring match between them. `probe=` records why the AX window-title probe ended up where it did: `ok` (got a title), `skipped` (an earlier gate short-circuited), `denied` (Accessibility not granted), `ax_failed` (AX returned an unexpected error — see `houdini logs` for the specific code), or `empty` (no matching on-screen window or title was empty).
 
 Each input also leaves a debug breadcrumb at the boundary, so a wrong decision can be traced back to the data that drove it: `→ np_rx …` per Now Playing event from mediaremote-adapter, `→ front_rx …` when AppKit reports a new frontmost app, `→ dock_rx …` per parsed Dock event, `→ ax_rx …` per AX focus/title notification, and `→ eval_skipped trig=…` / `→ eval_skipped_no_window trig=…` when the evaluation produced no change.
 
@@ -231,11 +231,11 @@ Hide requires all of: `fs=yes`, the frontmost `pid` matching `fsPid`, `play=yes`
 - **`np_tx=[pid=null,...]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media-session metadata) never register with the system Now Playing widget.
 - **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
 - **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
-- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission `win=null`, the check falls through to hide — the daemon then can't distinguish window-level cases. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘H` to flip the bar (see [Manual override](#manual-override)); the next real event yields control back to the daemon.
+- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission (`probe=denied`) the check falls through to hide — the daemon can't distinguish window-level cases. `probe=ax_failed` instead means AX is misbehaving for this app right now; check `houdini logs` for the specific AX error code. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘H` to flip the bar (see [Manual override](#manual-override)); the next real event yields control back to the daemon.
 
 ### Is it actually running?
 
-`houdini status` prints daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if the daemon isn't running. If either subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+`houdini status` prints daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if the daemon or either subprocess isn't running. If either subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
 
 ### Starting clean
 
@@ -260,6 +260,9 @@ Formula/houdini.rb    # Homebrew formula
 Package.swift         # Optional SwiftPM manifest (for IDE indexing)
 Sources/              # Swift daemon + CLI (Swift 6, strict concurrency)
 Sources/Version.swift # Single source of truth for the version string
+MIN_MACOS             # Single source of truth for the macOS deployment floor
+                      #   (read by build.sh + Package.swift; release.sh
+                      #   validates; Formula/houdini.rb is hand-maintained)
 vendor/               # mediaremote-adapter (Obj-C + Perl shim)
 ```
 

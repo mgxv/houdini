@@ -85,8 +85,8 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
 @MainActor
 func runStatus() -> Never {
     let daemonRunning = probeDaemonRunning()
-    let adapterAlive = subprocessAlive(matching: #"mediaremote-adapter.pl.*MediaRemoteAdapter.framework"#) // swiftformat:disable all
-    let dockLogAlive = subprocessAlive(matching: #"log stream.*dock-visibility"#)
+    let adapterAlive = subprocessAlive(matching: AdapterClient.statusPgrepPattern)
+    let dockLogAlive = subprocessAlive(matching: DockSpaceWatcher.statusPgrepPattern)
     let hotkeyState = daemonRunning ? (HotkeyState.read() ?? "unknown") : "n/a"
     let axTrusted = isAccessibilityTrusted()
     print("version:        \(version)")
@@ -187,7 +187,8 @@ func usage() {
                                 + dock-log subprocess health, hotkey
                                 registration, and Accessibility
                                 permission. Exits non-zero if the
-                                daemon isn't running.
+                                daemon or either subprocess isn't
+                                running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility

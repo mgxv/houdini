@@ -30,6 +30,15 @@ struct NowPlayingPID: Hashable {
     }
 }
 
+/// PID of the application that owns the active fullscreen Space, as
+/// reported by Dock's `dock-visibility` log channel.
+struct FSOwnerPID: Hashable {
+    let rawValue: pid_t
+    init(_ rawValue: pid_t) {
+        self.rawValue = rawValue
+    }
+}
+
 /// True if `a` and `b` resolve to the same user-facing app via
 /// `responsibility_get_pid_responsible_for_pid`. The syscall returns
 /// 0 for untracked PIDs and the PID itself for non-delegating ones;
@@ -65,28 +74,26 @@ extension FrontmostPID {
     /// Chrome/Safari host the FS window in a helper, so the FS-owner
     /// pid often differs from `frontmostApplication`'s pid — strict
     /// equality would mis-trip `front_not_fs_owner`.
-    func isSameApp(asFSOwnerPID fsOwnerPID: pid_t) -> Bool {
-        sameResponsibleApp(rawValue, fsOwnerPID)
+    func isSameApp(asFSOwnerPID fsOwnerPID: FSOwnerPID) -> Bool {
+        sameResponsibleApp(rawValue, fsOwnerPID.rawValue)
     }
 }
 
-extension NowPlayingPID {
-    /// Responsible process for this PID, or nil if untracked
-    /// (syscall returned 0) or self-delegating. Used to annotate log
-    /// lines so a failed `isSameProcess` check is diagnosable
-    /// without a rebuild.
-    var responsiblePID: pid_t? {
-        let resolved = responsibleProcess(for: rawValue)
-        guard resolved > 0, resolved != rawValue else { return nil }
-        return resolved
-    }
+private func responsiblePIDOrNil(for pid: pid_t) -> pid_t? {
+    let resolved = responsibleProcess(for: pid)
+    guard resolved > 0, resolved != pid else { return nil }
+    return resolved
 }
 
 extension FrontmostPID {
     var responsiblePID: pid_t? {
-        let resolved = responsibleProcess(for: rawValue)
-        guard resolved > 0, resolved != rawValue else { return nil }
-        return resolved
+        responsiblePIDOrNil(for: rawValue)
+    }
+}
+
+extension NowPlayingPID {
+    var responsiblePID: pid_t? {
+        responsiblePIDOrNil(for: rawValue)
     }
 }
 

@@ -9,7 +9,7 @@ import Testing
 @Suite("menuBarDecision gates")
 struct MenuBarDecisionTests {
     private struct Inputs {
-        var dockFs = DockFullScreenState(isFullScreen: true, pid: 100)
+        var dockFs = DockFullScreenState(isFullScreen: true, pid: FSOwnerPID(100))
         var isPlaying = true
         var frontPID: FrontmostPID? = .init(100)
         var frontBundle: String? = "com.example.App"
@@ -80,7 +80,7 @@ struct MenuBarDecisionTests {
         #expect(i.decision == .showNoNowPlayingPid)
     }
 
-    // MARK: - Gates 5/6: FS-owner
+    // MARK: - Gate 5: FS-owner
 
     @Test("Gate 5: nil dockFs.pid → show(front_not_fs_owner)")
     func gate5NilDockFsPID() {
@@ -93,7 +93,7 @@ struct MenuBarDecisionTests {
     func gate5FrontNotFsOwner() {
         var i = Inputs()
         i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: 200)
+        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(200))
         // Distinct bundles too, so isSameApp's fallback paths can't accidentally match.
         i.frontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
@@ -104,105 +104,105 @@ struct MenuBarDecisionTests {
     func gate5IdentityPasses() {
         var i = Inputs()
         i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: 100)
+        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
         #expect(i.decision == .hide)
     }
 
-    // MARK: - Gate 7: same-app
+    // MARK: - Gate 6: same-app
 
-    @Test("Gate 7: process AND bundle mismatch → show(app_mismatch)")
-    func gate7AppMismatch() {
+    @Test("Gate 6: process AND bundle mismatch → show(app_mismatch)")
+    func gate6AppMismatch() {
         var i = Inputs()
         i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: 100)
+        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
         i.frontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
         #expect(i.decision == .showAppMismatch)
     }
 
-    @Test("Gate 7: bundle match passes when process mismatches")
-    func gate7BundleMatch() {
+    @Test("Gate 6: bundle match passes when process mismatches")
+    func gate6BundleMatch() {
         var i = Inputs()
         i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: 100)
+        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
         i.frontBundle = "com.same.App"
         i.nowPlayingParentBundle = "com.same.App"
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 7: process match passes when bundle mismatches")
-    func gate7ProcessMatch() {
+    @Test("Gate 6: process match passes when bundle mismatches")
+    func gate6ProcessMatch() {
         var i = Inputs()
         i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: 100)
+        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
         i.nowPlayingPID = .init(100)
         i.frontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 7: empty parent bundle disables the bundle path")
-    func gate7EmptyParentBundleNoBundleMatch() {
+    @Test("Gate 6: empty parent bundle disables the bundle path")
+    func gate6EmptyParentBundleNoBundleMatch() {
         var i = Inputs()
         i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: 100)
+        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
         i.frontBundle = ""
         i.nowPlayingParentBundle = ""
         #expect(i.decision == .showAppMismatch)
     }
 
-    // MARK: - Gate 8: window-title refinement
+    // MARK: - Gate 7: window-title refinement
 
-    @Test("Gate 8: title contains NP title → hide")
-    func gate8TitleContains() {
+    @Test("Gate 7: title contains NP title → hide")
+    func gate7TitleContains() {
         var i = Inputs()
         i.frontWindowTitle = "Track X — YouTube — Google Chrome"
         i.nowPlayingTitle = "Track X"
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: title doesn't contain NP title → show(window_mismatch)")
-    func gate8TitleMismatch() {
+    @Test("Gate 7: title doesn't contain NP title → show(window_mismatch)")
+    func gate7TitleMismatch() {
         var i = Inputs()
         i.frontWindowTitle = "Settings — Google Chrome"
         i.nowPlayingTitle = "Track X"
         #expect(i.decision == .showWindowMismatch)
     }
 
-    @Test("Gate 8: case-sensitive (intentional)")
-    func gate8CaseSensitive() {
+    @Test("Gate 7: case-sensitive (intentional)")
+    func gate7CaseSensitive() {
         var i = Inputs()
         i.frontWindowTitle = "TRACK X — App"
         i.nowPlayingTitle = "Track X"
         #expect(i.decision == .showWindowMismatch)
     }
 
-    @Test("Gate 8: nil window title is lenient → hide")
-    func gate8NilWindowTitleLenient() {
+    @Test("Gate 7: nil window title is lenient → hide")
+    func gate7NilWindowTitleLenient() {
         var i = Inputs()
         i.frontWindowTitle = nil
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: empty window title is lenient → hide")
-    func gate8EmptyWindowTitleLenient() {
+    @Test("Gate 7: empty window title is lenient → hide")
+    func gate7EmptyWindowTitleLenient() {
         var i = Inputs()
         i.frontWindowTitle = ""
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: nil NP title is lenient → hide")
-    func gate8NilNowPlayingTitleLenient() {
+    @Test("Gate 7: nil NP title is lenient → hide")
+    func gate7NilNowPlayingTitleLenient() {
         var i = Inputs()
         i.nowPlayingTitle = nil
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 8: empty NP title is lenient → hide")
-    func gate8EmptyNowPlayingTitleLenient() {
+    @Test("Gate 7: empty NP title is lenient → hide")
+    func gate7EmptyNowPlayingTitleLenient() {
         var i = Inputs()
         i.nowPlayingTitle = ""
         #expect(i.decision == .hide)

@@ -200,8 +200,19 @@ done
 [ -f "$TAP_FORMULA" ]        || die "tap formula missing: $TAP_FORMULA"
 [ -f "$IN_REPO_FORMULA" ]    || die "in-repo formula missing: $IN_REPO_FORMULA"
 [ -f Sources/Version.swift ] || die "Sources/Version.swift missing"
+[ -f MIN_MACOS ]             || die "MIN_MACOS missing — required by build.sh and Package.swift"
 [ -x scripts/build.sh ]      || die "scripts/build.sh missing or not executable"
 ok "tools + files present (tap at $TAP_DIR)"
+
+STAGE="preflight: min macOS"
+step "Checking MIN_MACOS"
+# Single source of truth for the deployment floor (build.sh and
+# Package.swift also read this). The formula's `depends_on macos:`
+# symbol is hand-maintained — keep it in sync on bump.
+MIN_MACOS="$(tr -d '[:space:]' < MIN_MACOS)"
+[[ "$MIN_MACOS" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] \
+    || die "MIN_MACOS file is malformed: '$MIN_MACOS'"
+ok "MIN_MACOS = $MIN_MACOS"
 
 STAGE="preflight: git state (source)"
 step "Checking git state (this repo)"
@@ -227,14 +238,20 @@ elif ! gh auth status >/dev/null 2>&1; then
     note "gh CLI not authenticated — skipping CI status check (run: gh auth login)"
 else
     HEAD_SHA="$(git rev-parse HEAD)"
-    # Look at the most recent CI runs on main; accept the release only
-    # if a `success` run exists for the exact HEAD SHA. --limit 5 covers
-    # the case where a flaky failure was followed by a passing rerun.
-    if ! gh run list --branch main --workflow CI --limit 5 \
+    # Accept the release only if a `success` run exists for the exact
+    # HEAD SHA. --limit 5 covers a flaky failure followed by a rerun.
+    # Split "no runs found" from "runs found but not green" so a
+    # workflow rename surfaces with the right hint instead of
+    # masquerading as a real CI failure.
+    CONCLUSIONS="$(gh run list --branch main --workflow CI --limit 5 \
             --json conclusion,headSha \
-            --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .conclusion" \
-         | grep -qx success; then
-        die "CI is not green on HEAD ($HEAD_SHA) — wait for it to complete or fix the failure"
+            --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .conclusion")"
+    if [ -z "$CONCLUSIONS" ]; then
+        die "no CI runs found for HEAD ($HEAD_SHA) on main — has CI completed yet? (matching --workflow CI; check the name: field in .github/workflows/ci.yml if you renamed it)"
+    fi
+    if ! printf '%s\n' "$CONCLUSIONS" | grep -qx success; then
+        SUMMARY="$(printf '%s' "$CONCLUSIONS" | tr '\n' ',' | sed 's/,$//')"
+        die "CI is not green on HEAD ($HEAD_SHA) — found conclusions: $SUMMARY"
     fi
     ok "CI green on HEAD ($HEAD_SHA)"
 fi

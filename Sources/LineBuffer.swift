@@ -1,15 +1,14 @@
 // Accumulates byte chunks from a subprocess pipe, drains complete
-// (newline-terminated) lines to a handler. Grows unboundedly on
-// purpose — callers check `pendingBytes` and fail fatally on
-// overflow per-stream policy.
+// (newline-terminated) lines to a handler. `pendingBytes` exposes
+// the size of the not-yet-terminated tail, used by tests to assert
+// chunk-boundary semantics.
 
 import Foundation
 
 struct LineBuffer {
     private var data = Data()
 
-    /// Bytes in the current (not-yet-terminated) line. Callers
-    /// check this to enforce a per-stream size cap.
+    /// Bytes in the current (not-yet-terminated) line.
     var pendingBytes: Int {
         data.count
     }

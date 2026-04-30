@@ -17,13 +17,45 @@ func isAccessibilityTrusted() -> Bool {
     AXIsProcessTrusted()
 }
 
-@MainActor private var axPermissionLostReported = false
+@MainActor private var reportedAXErrors: Set<AXError> = []
 
 @MainActor
 private func noteAXError(_ error: AXError) {
-    guard error == .apiDisabled, !axPermissionLostReported else { return }
-    axPermissionLostReported = true
-    warn(accessibilityPermissionMessage)
+    guard error != .success, !reportedAXErrors.contains(error) else { return }
+    reportedAXErrors.insert(error)
+    if error == .apiDisabled {
+        warn(accessibilityPermissionMessage)
+    } else {
+        Log.general.error(
+            """
+            AX call returned \(describeAXError(error), privacy: .public) \
+            (rawValue=\(error.rawValue, privacy: .public)) — window-level \
+            refinement may be degraded for this session
+            """,
+        )
+    }
+}
+
+private func describeAXError(_ error: AXError) -> String {
+    switch error {
+    case .success: "success"
+    case .failure: "failure"
+    case .illegalArgument: "illegalArgument"
+    case .invalidUIElement: "invalidUIElement"
+    case .invalidUIElementObserver: "invalidUIElementObserver"
+    case .cannotComplete: "cannotComplete"
+    case .attributeUnsupported: "attributeUnsupported"
+    case .actionUnsupported: "actionUnsupported"
+    case .notificationUnsupported: "notificationUnsupported"
+    case .notImplemented: "notImplemented"
+    case .notificationAlreadyRegistered: "notificationAlreadyRegistered"
+    case .notificationNotRegistered: "notificationNotRegistered"
+    case .apiDisabled: "apiDisabled"
+    case .noValue: "noValue"
+    case .parameterizedAttributeUnsupported: "parameterizedAttributeUnsupported"
+    case .notEnoughPrecision: "notEnoughPrecision"
+    @unknown default: "unknown"
+    }
 }
 
 /// Private HIServices symbol that bridges an `AXUIElement` window
@@ -42,8 +74,9 @@ private func _AXUIElementGetWindow(
 enum WindowTitleProbeStatus: String {
     case ok // got a non-empty title
     case skipped // caller didn't probe (short-circuit)
-    case denied // AX permission denied
-    case empty // probe ran, no usable title
+    case denied // AX permission denied (`.apiDisabled`)
+    case axFailed = "ax_failed" // AX returned a non-success error other than `.apiDisabled`
+    case empty // probe ran, no usable title (no pid / no on-screen windows / all titles empty)
 }
 
 struct WindowTitleProbe {
@@ -89,7 +122,11 @@ func visibleWindowTitle(for pid: pid_t?) -> WindowTitleProbe {
         noteAXError(axStatus)
         return WindowTitleProbe(title: nil, status: .denied)
     }
-    guard axStatus == .success, let windows = windowsRef as? [AXUIElement] else {
+    if axStatus != .success {
+        noteAXError(axStatus)
+        return WindowTitleProbe(title: nil, status: .axFailed)
+    }
+    guard let windows = windowsRef as? [AXUIElement] else {
         return WindowTitleProbe(title: nil, status: .empty)
     }
 
@@ -200,16 +237,18 @@ final class AXWatcher {
 
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let appElement = AXUIElementCreateApplication(pid)
-        AXObserverAddNotification(
+        var addStatus = AXObserverAddNotification(
             obs, appElement,
             kAXFocusedWindowChangedNotification as CFString,
             refcon,
         )
-        AXObserverAddNotification(
+        if addStatus != .success { noteAXError(addStatus) }
+        addStatus = AXObserverAddNotification(
             obs, appElement,
             kAXFocusedUIElementChangedNotification as CFString,
             refcon,
         )
+        if addStatus != .success { noteAXError(addStatus) }
         CFRunLoopAddSource(
             CFRunLoopGetMain(),
             AXObserverGetRunLoopSource(obs),
@@ -232,9 +271,10 @@ final class AXWatcher {
 
     func detach() {
         if let obs = observer, let watched = watchedWindow {
-            AXObserverRemoveNotification(
+            let removeStatus = AXObserverRemoveNotification(
                 obs, watched, kAXTitleChangedNotification as CFString,
             )
+            if removeStatus != .success { noteAXError(removeStatus) }
         }
         if let obs = observer {
             CFRunLoopRemoveSource(
@@ -252,13 +292,15 @@ final class AXWatcher {
         guard let obs = observer else { return }
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         if let old = watchedWindow {
-            AXObserverRemoveNotification(
+            let removeStatus = AXObserverRemoveNotification(
                 obs, old, kAXTitleChangedNotification as CFString,
             )
+            if removeStatus != .success { noteAXError(removeStatus) }
         }
-        AXObserverAddNotification(
+        let addStatus = AXObserverAddNotification(
             obs, window, kAXTitleChangedNotification as CFString, refcon,
         )
+        if addStatus != .success { noteAXError(addStatus) }
         watchedWindow = window
     }
 }
