@@ -163,11 +163,14 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 
 ## Manual override
 
-`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar regardless of what the daemon decided — force-hide if it's showing, force-show if it's hidden. The override is one-shot: any subsequent event (frontmost app change, fullscreen toggle, AX focus event, Now Playing update) yields automatic control back to the daemon.
+`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden. The override is one-shot: the next time you switch apps, toggle fullscreen, switch tabs, or pause/resume playback, houdini takes over again automatically.
 
-This is a fallback for the unreliability of `kAXTitleChangedNotification`, which powers gate 7 (window-title refinement). macOS can delay these notifications by hundreds of milliseconds, deliver them out of order, or skip emitting them entirely — occasionally leaving the daemon's window-title check stuck on a stale state (menu bar visible while a video plays fullscreen, or vice-versa). Press the chord to flip the bar; the next real event will restore the correct decision.
+It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be. Press the shortcut to flip the bar; the next real event puts houdini back in charge.
 
 ## Diagnostics
+
+<details>
+<summary>Click to expand</summary>
 
 ```bash
 houdini status                    # print version, daemon state,
@@ -204,6 +207,8 @@ log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # hist
 ```
 
 Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
+
+</details>
 
 ## Troubleshooting
 
