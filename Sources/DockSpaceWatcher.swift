@@ -150,11 +150,9 @@ final class DockSpaceWatcher {
             return .staySpaceChange
         }
 
-        // Split View shares one `fullscreen=true` Space across 2+
-        // tiles — treat as not-fullscreen so the bar stays visible.
         let isFullScreen: Bool
         if line.contains("fullscreen=true") {
-            isFullScreen = !hasMultipleTileSpaces(line)
+            isFullScreen = true
         } else if line.contains("fullscreen=false") {
             isFullScreen = false
         } else {
@@ -171,12 +169,5 @@ final class DockSpaceWatcher {
         }
 
         return .fullScreenState(DockFullScreenState(isFullScreen: isFullScreen, pid: pid))
-    }
-
-    /// True if the line has 2+ `<TileSpace:` blocks — Dock's
-    /// signature for a Split-View / tiled fullscreen Space.
-    private static func hasMultipleTileSpaces(_ line: String) -> Bool {
-        guard let first = line.range(of: "<TileSpace:") else { return false }
-        return line.range(of: "<TileSpace:", range: first.upperBound ..< line.endIndex) != nil
     }
 }
