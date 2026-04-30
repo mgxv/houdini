@@ -235,34 +235,18 @@ Hide requires all of: `fs=yes`, the frontmost `pid` matching `fsPid`, `play=yes`
 
 ### Is it actually running?
 
-```bash
-houdini status                     # prints `daemon: running` / `not running`;
-                                   # exits non-zero if not running
-brew services info houdini         # launchd view: Running / Loaded / PID
-pgrep -afl houdini                 # confirms the Swift daemon is alive
-pgrep -afl mediaremote-adapter     # confirms the Perl Now-Playing subprocess
-pgrep -afl 'log stream.*dock'      # confirms the dock-visibility subscription
-```
-
-A healthy install shows **three** processes — the `houdini` binary plus two subprocesses it spawns:
-
-- `/usr/bin/perl … mediaremote-adapter.pl stream …` — Now-Playing event source
-- `/usr/bin/log stream --predicate …com.apple.dock…` — Dock fullscreen-state event source
-
-If either subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+`houdini status` prints daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if the daemon isn't running. If either subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
 
 ### Starting clean
 
-If state feels stuck (menu bar hidden when it shouldn't be, orphan subprocesses, a foreground `./houdini` you forgot about):
+To clear orphan subprocesses or a foreground `./houdini` you forgot about:
 
 ```bash
 brew services stop houdini
-pkill -x houdini                   # kill any foreground or orphan houdini
-pkill -f mediaremote-adapter       # kill any orphan Perl subprocesses
+pkill -x houdini
+pkill -f mediaremote-adapter
 brew services start houdini
 ```
-
-houdini terminates its child `log stream` subprocess on shutdown, so a separate `pkill` for it isn't needed.
 
 </details>
 
