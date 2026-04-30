@@ -12,7 +12,7 @@
 [![Homebrew](https://img.shields.io/github/v/tag/mgxv/houdini?logo=homebrew&label=brew&color=orange&sort=semver)](https://github.com/mgxv/homebrew-houdini)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. When you switch apps, exit fullscreen, or pause, the menu bar returns. No UI; one fallback hotkey (`⌃⌥⌘H`) for the rare cases where AX events stutter and the bar gets stuck.
+A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. When you switch apps, exit fullscreen, or pause, the menu bar returns. No UI; one fallback hotkey (`⌃⌥⌘M`) for the rare cases where AX events stutter and the bar gets stuck.
 
 ## Who this is for
 
@@ -163,7 +163,7 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 
 ## Manual override
 
-`⌃⌥⌘H` (Ctrl+Option+Cmd+H) flips the menu bar regardless of what the daemon decided — force-hide if it's showing, force-show if it's hidden. The override is one-shot: any subsequent event (frontmost app change, fullscreen toggle, AX focus event, Now Playing update) yields automatic control back to the daemon.
+`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar regardless of what the daemon decided — force-hide if it's showing, force-show if it's hidden. The override is one-shot: any subsequent event (frontmost app change, fullscreen toggle, AX focus event, Now Playing update) yields automatic control back to the daemon.
 
 This is a fallback for the unreliability of `kAXTitleChangedNotification`, which powers gate 7 (window-title refinement). macOS can delay these notifications by hundreds of milliseconds, deliver them out of order, or skip emitting them entirely — occasionally leaving the daemon's window-title check stuck on a stale state (menu bar visible while a video plays fullscreen, or vice-versa). Press the chord to flip the bar; the next real event will restore the correct decision.
 
@@ -231,7 +231,7 @@ Hide requires all of: `fs=yes`, the frontmost `pid` matching `fsPid`, `play=yes`
 - **`np_tx=[pid=null,...]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media-session metadata) never register with the system Now Playing widget.
 - **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
 - **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
-- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission (`probe=denied`) the check falls through to hide — the daemon can't distinguish window-level cases. `probe=ax_failed` instead means AX is misbehaving for this app right now; check `houdini logs` for the specific AX error code. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘H` to flip the bar (see [Manual override](#manual-override)); the next real event yields control back to the daemon.
+- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission (`probe=denied`) the check falls through to hide — the daemon can't distinguish window-level cases. `probe=ax_failed` instead means AX is misbehaving for this app right now; check `houdini logs` for the specific AX error code. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘M` to flip the bar (see [Manual override](#manual-override)); the next real event yields control back to the daemon.
 
 ### Is it actually running?
 

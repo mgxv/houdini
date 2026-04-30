@@ -2,6 +2,7 @@
 // `status`, `logs`, `version`, `help`. LaunchAgent lifecycle is
 // delegated to Homebrew (`brew services`).
 
+import AppKit
 import Foundation
 
 // MARK: - Foreground
@@ -10,6 +11,16 @@ import Foundation
 /// `brew services`; runs fine in a terminal for local debugging too.
 @MainActor
 func runForeground() {
+    // Initializes NSApp + keeps the daemon out of the Dock. NSApp
+    // is required: Carbon hotkey events are dispatched via NSApp.run.
+    NSApplication.shared.setActivationPolicy(.accessory)
+
+    // Opt out of App Nap so idle throttling can't defer event delivery.
+    let activity = ProcessInfo.processInfo.beginActivity(
+        options: [.userInitiatedAllowingIdleSystemSleep],
+        reason: "houdini daemon",
+    )
+
     let artifacts = locateArtifacts()
     acquireInstanceLock()
 
@@ -52,8 +63,8 @@ func runForeground() {
 
     Log.general.notice("houdini \(version, privacy: .public) running")
     print("houdini \(version) running. Press Ctrl-C to quit.")
-    withExtendedLifetime(signalSources) {
-        RunLoop.main.run()
+    withExtendedLifetime((signalSources, activity)) {
+        NSApp.run()
     }
 }
 
