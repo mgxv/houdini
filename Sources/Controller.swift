@@ -300,9 +300,8 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   → {hide|show(reason)}  trig=<src>  appMatch=<…> 
-    /// front_tx=<head>[pid=…,name=…,bundle=…,fs=…,fsPid=…]
-    ///   → np_tx=<head>[pid=…,bundle=…,parent=…,resp=…,play=…]
+    ///   → {hide|show(reason)}  trig=<src>  appMatch=<…>  front_tx=<head>[…]
+    ///   → np_tx=<head>[…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
     /// `WebKit.GPU`) — a visual anchor for scanning. Missing
