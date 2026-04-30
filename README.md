@@ -37,63 +37,68 @@ houdini hides the menu bar only when **all** of these are true:
 When any becomes false, the menu bar comes back.
 
 ```
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│    AppKit    │   │   Dock Log   │   │ MediaRemote  │   │  AXWatcher   │
-│ (in-process) │   │ (subprocess) │   │  (Perl shim) │   │ (in-process) │
-└──────┬───────┘   └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-       │                  │                  │                  │
-       │ frontmost        │ FS state         │ playback state   │ AX focus
-       │ changed          │ + owner PID      │ + PID            │ + title change
-       │                  │ + FS↔FS hop      │ + bundle         │ notifications
-       │                  │   (refresh PID)  │ + track title    │
-       ▼                  ▼                  ▼                  ▼
-   front_app         dock_fs/state        adapter            window
-       │             dock_stay               │                  │
-       │                  │                  │                  │
-       └────────────┬─────┴─────┬────────────┴─────┬────────────┘
-                    ▼           ▼                  ▼
-                ┌──────────────────────────────────────┐
-                │              Controller              │
-                │  + initial one-time launch trigger   │
-                └──────────────────┬───────────────────┘
-                                   ▼
-                             takeSnapshot()
-                    (always re-reads window title via AX)
-                                   │
-                                   ▼
-                      menuBarDecision (sequential gates)
-                      ─────────────────────────────────
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│    AppKit    │ │   Dock Log   │ │ MediaRemote  │ │  AXWatcher   │ │    Hotkey    │
+│ (in-process) │ │ (subprocess) │ │ (Perl shim)  │ │ (in-process) │ │   (Carbon)   │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+       │                │                │                │                │
+       │ frontmost      │ FS state       │ playback       │ AX focus       │ ⌃⌥⌘M
+       │ changed        │ + owner PID    │ state + PID    │ + title change │ pressed
+       │                │ + FS↔FS hop    │ + bundle       │ notifications  │
+       │                │   (refresh)    │ + track title  │                │
+       ▼                ▼                ▼                ▼                ▼
+   front_app    dock_fs / dock_stay   adapter           window           hotkey
+       │                │                │                │                │
+       └────────────────┴────────────────┼────────────────┴────────────────┘
+                                         │
+                                         ▼
+                       ┌──────────────────────────────────────┐
+                       │              Controller              │
+                       │     + initial launch trigger (start) │
+                       └──────────────────┬───────────────────┘
+                                          ▼
+                                    takeSnapshot()
+                            (probes AX window title only when
+                             FS + playing + both PIDs present)
+                                          │
+                                          ▼
+                          menuBarDecision (sequential gates)
+                          ─────────────────────────────────
 
-                    (1) Fullscreen Space active?
-                        └─ no  → show(not_fullscreen)
+                       (1) Fullscreen Space active?
+                           └─ no  → show(not_fullscreen)
 
-                    (2) Media playing?
-                        └─ no  → show(not_playing)
+                       (2) Media playing?
+                           └─ no  → show(not_playing)
 
-                    (3) Frontmost PID present?
-                        └─ no  → show(no_front_pid)
+                       (3) Frontmost PID present?
+                           └─ no  → show(no_front_pid)
 
-                    (4) Now Playing PID present?
-                        └─ no  → show(no_now_playing_pid)
+                       (4) Now Playing PID present?
+                           └─ no  → show(no_now_playing_pid)
 
-                    (5) Frontmost owns FS Space?
-                        (multi-display gate)
-                        └─ no  → show(front_not_fs_owner)
+                       (5) Frontmost owns FS Space?
+                           (multi-display gate)
+                           └─ no  → show(front_not_fs_owner)
 
-                    (6) Frontmost == Now Playing source?
-                        (process or bundle match)
-                        └─ no  → show(app_mismatch)
+                       (6) Frontmost == Now Playing source?
+                           (process or bundle match)
+                           └─ no  → show(app_mismatch)
 
-                    (7) Window title contains track title?
-                        (AX-based refinement)
-                        └─ no  → show(window_mismatch)
+                       (7) Window title contains track title?
+                           (AX-based refinement)
+                           └─ no  → show(window_mismatch)
 
-                                   ▼
-                              hide / show
-                                   │
-                                   ▼
-            AppleMenuBarVisibleInFullscreen (system pref)
-            + DistributedNotification → WindowServer
+                                          │
+                                          ▼
+                                  effectiveShouldHide
+                                (overrule: hotkey toggles
+                                 force_hide / force_show;
+                                 any other trigger → auto)
+                                          │
+                                          ▼
+                  AppleMenuBarVisibleInFullscreen (system pref)
+                  + DistributedNotification → WindowServer
 ```
 
 <details>
