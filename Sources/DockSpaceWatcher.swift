@@ -30,7 +30,7 @@ struct DockFullScreenState: Equatable {
 /// Events from the dock-visibility log channel. `staySpaceChange`
 /// is the `Skipping no-op state update` pulse Dock emits on silent
 /// FS↔FS Space switches — no payload, just "active Space changed."
-enum DockSpaceEvent {
+enum DockSpaceEvent: Equatable {
     case fullScreenState(DockFullScreenState)
     case staySpaceChange
 }
@@ -145,7 +145,7 @@ final class DockSpaceWatcher {
     /// `Space Forces Hidden:` exit messages omit the pid and surface
     /// as `pid=nil`, which `shouldHideMenuBar`'s non-nil pid guard
     /// then rejects.
-    private static func parse(_ line: String) -> DockSpaceEvent? {
+    nonisolated static func parse(_ line: String) -> DockSpaceEvent? {
         if line.contains("Skipping no-op state update") {
             return .staySpaceChange
         }

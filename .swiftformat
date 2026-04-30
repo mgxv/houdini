@@ -1,1 +1,2 @@
 --maxwidth 100
+--disable swiftTestingTestCaseNames
