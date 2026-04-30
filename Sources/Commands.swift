@@ -83,12 +83,15 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
 // MARK: - status
 
 /// Exits non-zero when the daemon isn't running, so
-/// `houdini status && …` is a usable script primitive.
+/// `houdini status && …` is a usable script primitive. AX state is
+/// informational; it doesn't affect the exit code.
 @MainActor
 func runStatus() -> Never {
     let daemonRunning = probeDaemonRunning()
-    print("version:  houdini \(version)")
-    print("daemon:   \(daemonRunning ? "running" : "not running")")
+    let axTrusted = isAccessibilityTrusted()
+    print("version:        houdini \(version)")
+    print("daemon:         \(daemonRunning ? "running" : "not running")")
+    print("accessibility:  \(axTrusted ? "granted" : "not granted")")
     exit(daemonRunning ? 0 : 1)
 }
 
@@ -165,8 +168,10 @@ func usage() {
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
-      houdini status            Print version and whether a daemon is
-                                running. Exits non-zero if not running.
+      houdini status            Print version, whether a daemon is
+                                running, and whether Accessibility
+                                permission is granted. Exits non-zero
+                                if the daemon isn't running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility
