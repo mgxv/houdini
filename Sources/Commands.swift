@@ -84,9 +84,6 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
 
 @MainActor
 func runStatus() -> Never {
-    // Patterns live next to the spawn code so a future spawn-shape
-    // change is visible at the same edit. See `AdapterClient` and
-    // `DockSpaceWatcher` for the rationale on each regex.
     let daemonRunning = probeDaemonRunning()
     let adapterAlive = subprocessAlive(matching: AdapterClient.statusPgrepPattern)
     let dockLogAlive = subprocessAlive(matching: DockSpaceWatcher.statusPgrepPattern)
