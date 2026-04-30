@@ -42,10 +42,11 @@ enum EvalTrigger: String {
     case window
 }
 
-/// `frontPID.rawValue == dockFs.pid` is the multi-display gate: if
-/// FS Chrome is on display 2 but the user is focused on a windowed
-/// app on display 1, the front PID won't match the Dock-reported FS
-/// owner and we keep the menu bar visible.
+/// `frontPID.isSameApp(asFSOwnerPID: dockFs.pid)` is the multi-display
+/// gate: if FS Chrome is on display 2 but the user is focused on a
+/// windowed app on display 1, the front PID won't resolve to the same
+/// responsible app as the Dock-reported FS owner and we keep the menu
+/// bar visible.
 ///
 /// Same-app-as-Now-Playing tests (process-level — either is sufficient):
 ///   1. Responsibility-PID mapping via the kernel syscall
@@ -58,7 +59,7 @@ enum EvalTrigger: String {
 ///      syscall regresses.
 ///
 /// Window-level refinement runs only after the process check passes:
-/// case-insensitive substring match between Now Playing's `title` and
+/// case-sensitive substring match between Now Playing's `title` and
 /// the focused window's title. Catches the "two FS Chrome windows,
 /// only one playing" case where process equality alone says hide.
 /// Lenient on missing data — if either side's title is nil/empty,
@@ -80,7 +81,7 @@ func menuBarDecision(
     guard let nowPlayingPID else { return .showNoNowPlayingPid }
 
     guard let dockFsPID = dockFs.pid else { return .showFrontNotFsOwner }
-    guard frontPID.rawValue == dockFsPID else { return .showFrontNotFsOwner }
+    guard frontPID.isSameApp(asFSOwnerPID: dockFsPID) else { return .showFrontNotFsOwner }
 
     let processMatch = frontPID.isSameProcess(as: nowPlayingPID)
     let bundleMatch: Bool = {
@@ -267,10 +268,17 @@ final class Controller: NSObject {
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let frontName = frontApp?.localizedName ?? "(unknown)"
         let frontBundle = frontApp?.bundleIdentifier
-        // Pulled fresh per snapshot — AX state can drift between
-        // events even within the same app (tab switches, page nav),
-        // so the title can't be cached on `frontApp` change alone.
-        let frontWindowTitle = visibleWindowTitle(for: frontApp?.processIdentifier)
+        // Skip the AX/CGWindow walk when an earlier gate will
+        // short-circuit anyway. Pulled fresh otherwise — AX state
+        // drifts within an app (tab switches, page nav) so the title
+        // can't be cached on `frontApp` change alone.
+        let needsTitle = dockFs.isFullScreen
+            && isPlaying
+            && frontPID != nil
+            && nowPlayingPID != nil
+        let frontWindowTitle = needsTitle
+            ? visibleWindowTitle(for: frontApp?.processIdentifier)
+            : nil
 
         return Snapshot(
             frontPID: frontPID,
@@ -375,16 +383,24 @@ final class Controller: NSObject {
     /// preserves "field absent" vs. "MediaRemote reported the field
     /// as empty" — the underlying optionals mean genuinely different
     /// things (e.g. a nil parentBundle is "no helper relationship").
+    /// Quotes spaces / empty / embedded `"`; embedded `"` is escaped
+    /// so the quoted span tokenizes as one field.
     private static func formatNullableString(_ value: String?) -> String {
         guard let value else { return "null" }
-        return value.contains(" ") || value.isEmpty
-            ? "\"\(value)\""
-            : value
+        let needsQuoting = value.isEmpty || value.contains(" ") || value.contains("\"")
+        guard needsQuoting else { return value }
+        return "\"\(escapeQuotes(value))\""
     }
 
     /// Always quote — `name` is a free-form display string that may
-    /// contain spaces, parens, or LTR markers.
+    /// contain spaces, parens, or LTR markers. Embedded `"` is escaped.
     private static func quoteString(_ value: String) -> String {
-        "\"\(value)\""
+        "\"\(escapeQuotes(value))\""
+    }
+
+    private static func escapeQuotes(_ value: String) -> String {
+        value.contains("\"")
+            ? value.replacingOccurrences(of: "\"", with: "\\\"")
+            : value
     }
 }
