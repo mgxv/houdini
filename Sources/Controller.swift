@@ -370,7 +370,8 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}  trig=<src>  appMatch=<…>  front_tx=<head>[…]
+    ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}  trig=<src>  appMatch=<…> 
+    /// front_tx=<head>[…]
     ///   → np_tx=<head>[…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
