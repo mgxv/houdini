@@ -370,7 +370,7 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}  trig=<src>  appMatch=<…> 
+    ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}  trig=<src>  appMatch=<…>
     /// front_tx=<head>[…]
     ///   → np_tx=<head>[…]
     ///
@@ -431,8 +431,8 @@ final class Controller: NSObject {
     /// hide/show decision to the AX event that triggered it.
     private static func formatAXEvent(name: String, element: AXUIElement) -> String {
         let app = NSWorkspace.shared.frontmostApplication
-        let pid = app?.processIdentifier ?? 0
-        let appName = quoted(app?.localizedName ?? "(unknown)")
+        let pid = formatNullable(app?.processIdentifier)
+        let appName = quotedNullable(app?.localizedName)
         let title = formatNullableString(windowTitle(forElement: element))
         return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
@@ -496,6 +496,10 @@ final class Controller: NSObject {
     /// contain spaces, parens, or LTR markers. Embedded `"` is escaped.
     private static func quoted(_ value: String) -> String {
         "\"\(escapeQuotes(value))\""
+    }
+
+    private static func quotedNullable(_ value: String?) -> String {
+        value.map { quoted($0) } ?? "null"
     }
 
     private static func escapeQuotes(_ value: String) -> String {
