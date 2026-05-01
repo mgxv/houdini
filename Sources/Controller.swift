@@ -76,9 +76,9 @@ enum Overrule: String {
 /// case-sensitive substring match between Now Playing's `title` and
 /// the focused window's title. Catches the "two FS Chrome windows,
 /// only one playing" case where process equality alone says hide.
-/// Lenient on missing data — if either side's title is nil/empty,
-/// fall through to hide so we don't flicker on title-lag right after
-/// focus changes.
+///
+/// Front-window-title `nil` = AX unknown → lenient hide; `""` =
+/// probe-confirmed no titled window → show(window_mismatch).
 func menuBarDecision(
     dockFs: DockFullScreenState,
     isPlaying: Bool,
@@ -105,7 +105,7 @@ func menuBarDecision(
     guard processMatch || bundleMatch else { return .showAppMismatch }
 
     if let npTitle = nowPlayingTitle, !npTitle.isEmpty,
-       let winTitle = frontWindowTitle, !winTitle.isEmpty,
+       let winTitle = frontWindowTitle,
        !winTitle.contains(npTitle)
     {
         return .showWindowMismatch
@@ -154,6 +154,26 @@ final class Controller: NSObject {
             case .forceShow: false
             case .auto: decision.shouldHide
             }
+        }
+
+        /// Log verb that matches the effective outcome — so an active
+        /// overrule reads as `hide(force_hide)` / `show(force_show)`
+        /// instead of the underlying daemon decision.
+        var effectiveTag: String {
+            switch overrule {
+            case .forceHide: "hide(force_hide)"
+            case .forceShow: "show(force_show)"
+            case .auto: decision.tag
+            }
+        }
+
+        /// Equality ignoring `overrule` — distinguishes a real state
+        /// change from a heartbeat so no-op input can't clear an
+        /// active overrule.
+        func signalsEqual(_ other: Snapshot) -> Bool {
+            var copy = self
+            copy.overrule = other.overrule
+            return copy == other
         }
     }
 
@@ -292,7 +312,12 @@ final class Controller: NSObject {
             return
         }
 
-        if trigger != .hotkey {
+        // Return control to the daemon only on a real state change.
+        // Without the signalsEqual guard, an adapter heartbeat or AX
+        // focus refresh (constant during playback, identical fields)
+        // would clear an active force_hide / force_show on every tick.
+        let signalsChanged = lastSnapshot.map { !snap.signalsEqual($0) } ?? true
+        if trigger != .hotkey, signalsChanged {
             overrule = .auto
             snap.overrule = .auto
         }
@@ -325,12 +350,13 @@ final class Controller: NSObject {
         let probe: WindowTitleProbe = needsTitle
             ? visibleWindowTitle(for: frontApp?.processIdentifier)
             : .skipped
+        let frontWindowTitle: String? = probe.status == .empty ? "" : probe.title
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
             frontBundle: frontBundle,
-            frontWindowTitle: probe.title,
+            frontWindowTitle: frontWindowTitle,
             frontWindowProbeStatus: probe.status,
             dockFs: dockFs,
             isPlaying: isPlaying,
@@ -344,7 +370,8 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   → {hide|show(reason)}  trig=<src>  appMatch=<…>  front_tx=<head>[…]
+    ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}  trig=<src>  appMatch=<…>
+    /// front_tx=<head>[…]
     ///   → np_tx=<head>[…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
@@ -355,16 +382,12 @@ final class Controller: NSObject {
     private func logSnapshot(_ snap: Snapshot, trigger: EvalTrigger) {
         let head = Self.formatSnapshotHead(snap, trigger: trigger)
         let np = Self.formatSnapshotNowPlaying(snap)
-        Log.controller.info(
-            """
-            → \(head, privacy: .public)
-            → \(np, privacy: .public)
-            """,
-        )
+        Log.controller.info("→ \(head, privacy: .public)")
+        Log.controller.info("→ \(np, privacy: .public)")
     }
 
     private static func formatSnapshotHead(_ snap: Snapshot, trigger: EvalTrigger) -> String {
-        let tag = snap.decision.tag
+        let tag = snap.effectiveTag
         let trig = trigger.rawValue
         let overrule = snap.overrule.rawValue
         return """
@@ -408,9 +431,9 @@ final class Controller: NSObject {
     /// hide/show decision to the AX event that triggered it.
     private static func formatAXEvent(name: String, element: AXUIElement) -> String {
         let app = NSWorkspace.shared.frontmostApplication
-        let pid = app?.processIdentifier ?? 0
-        let appName = quoted(app?.localizedName ?? "(unknown)")
-        let title = quoted(windowTitle(forElement: element) ?? "")
+        let pid = formatNullable(app?.processIdentifier)
+        let appName = quotedNullable(app?.localizedName)
+        let title = formatNullableString(windowTitle(forElement: element))
         return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
 
@@ -473,6 +496,10 @@ final class Controller: NSObject {
     /// contain spaces, parens, or LTR markers. Embedded `"` is escaped.
     private static func quoted(_ value: String) -> String {
         "\"\(escapeQuotes(value))\""
+    }
+
+    private static func quotedNullable(_ value: String?) -> String {
+        value.map { quoted($0) } ?? "null"
     }
 
     private static func escapeQuotes(_ value: String) -> String {

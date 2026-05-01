@@ -187,11 +187,11 @@ struct MenuBarDecisionTests {
         #expect(i.decision == .hide)
     }
 
-    @Test("Gate 7: empty window title is lenient → hide")
-    func gate7EmptyWindowTitleLenient() {
+    @Test("Gate 7: empty window title (probe-confirmed) → show(window_mismatch)")
+    func gate7EmptyWindowTitleStrict() {
         var i = Inputs()
         i.frontWindowTitle = ""
-        #expect(i.decision == .hide)
+        #expect(i.decision == .showWindowMismatch)
     }
 
     @Test("Gate 7: nil NP title is lenient → hide")
