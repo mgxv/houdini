@@ -206,6 +206,18 @@ final class AXWatcher {
     private var watchedWindow: AXUIElement?
     private let onChange: @MainActor (String, AXUIElement) -> Void
 
+    /// Monotonic counter of distinct focused-element shifts.
+    /// Folded into `Controller.Snapshot` so `signalsEqual`
+    /// detects tab switches even when the window title is stable
+    /// across them — otherwise an active overrule never clears on
+    /// `.window` triggers in that case.
+    private(set) var focusEpoch: UInt64 = 0
+
+    /// CFEqual baseline for `updateFocusEpoch`. Reset on
+    /// `detach()` so the next attach's first focus event always
+    /// registers as a shift.
+    private var lastFocusedElement: AXUIElement?
+
     init(onChange: @escaping @MainActor (String, AXUIElement) -> Void) {
         self.onChange = onChange
     }
@@ -225,6 +237,7 @@ final class AXWatcher {
                 if notification == (kAXFocusedWindowChangedNotification as String) {
                     me.refreshTitleSubscription(on: element)
                 }
+                me.updateFocusEpoch(notification: notification, element: element)
                 me.onChange(notification, element)
             }
         }
@@ -286,6 +299,25 @@ final class AXWatcher {
         observer = nil
         attachedPID = 0
         watchedWindow = nil
+        lastFocusedElement = nil
+    }
+
+    /// Maintains `focusEpoch` and `lastFocusedElement`. Bumps
+    /// only on real focus shifts so the Controller can distinguish
+    /// "user moved focus" (tab switch, click into a different
+    /// pane) from constant AX chatter during playback.
+    private func updateFocusEpoch(notification: String, element: AXUIElement) {
+        // Title-changed never counts: subtitle/timer elements fire
+        // AXTitleChanged on the same focused element during
+        // playback and would clear an active override every tick.
+        guard notification == (kAXFocusedWindowChangedNotification as String)
+            || notification == (kAXFocusedUIElementChangedNotification as String)
+        else { return }
+        // Same logical element re-reported (system re-fires the
+        // notification without an actual shift) — skip.
+        if let last = lastFocusedElement, CFEqual(last, element) { return }
+        lastFocusedElement = element
+        focusEpoch &+= 1
     }
 
     private func refreshTitleSubscription(on window: AXUIElement) {
