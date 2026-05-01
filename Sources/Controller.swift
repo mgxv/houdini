@@ -155,6 +155,15 @@ final class Controller: NSObject {
             case .auto: decision.shouldHide
             }
         }
+
+        /// Equality ignoring `overrule` — distinguishes a real state
+        /// change from a heartbeat so no-op input can't clear an
+        /// active overrule.
+        func signalsEqual(_ other: Snapshot) -> Bool {
+            var copy = self
+            copy.overrule = other.overrule
+            return copy == other
+        }
     }
 
     private let menuBar: MenuBarToggler
@@ -292,7 +301,12 @@ final class Controller: NSObject {
             return
         }
 
-        if trigger != .hotkey {
+        // Return control to the daemon only on a real state change.
+        // Without the signalsEqual guard, an adapter heartbeat or AX
+        // focus refresh (constant during playback, identical fields)
+        // would clear an active force_hide / force_show on every tick.
+        let signalsChanged = lastSnapshot.map { !snap.signalsEqual($0) } ?? true
+        if trigger != .hotkey, signalsChanged {
             overrule = .auto
             snap.overrule = .auto
         }
