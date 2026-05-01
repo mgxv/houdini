@@ -133,6 +133,13 @@ final class Controller: NSObject {
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
         let nowPlayingTitle: String?
+        /// Source: `AXWatcher.focusEpoch`. Lets `signalsEqual`
+        /// detect tab switches when the window title is stable
+        /// across them. Not consulted by `menuBarDecision` —
+        /// pure delta-detection signal. Excluded from
+        /// `decisionEqual` so a focus shift with no
+        /// decision-relevant change doesn't re-emit a snapshot.
+        var focusEpoch: UInt64
         var overrule: Overrule
 
         var decision: MenuBarDecision {
@@ -173,6 +180,18 @@ final class Controller: NSObject {
         func signalsEqual(_ other: Snapshot) -> Bool {
             var copy = self
             copy.overrule = other.overrule
+            return copy == other
+        }
+
+        /// Equality on fields that drive the menu-bar output.
+        /// Excludes `overrule` (compared explicitly by the caller)
+        /// and `focusEpoch` (delta-detection only — bumping it on
+        /// every AX focus shift would re-emit a redundant snapshot
+        /// even though nothing user-visible changed).
+        func decisionEqual(_ other: Snapshot) -> Bool {
+            var copy = self
+            copy.overrule = other.overrule
+            copy.focusEpoch = other.focusEpoch
             return copy == other
         }
     }
@@ -294,6 +313,12 @@ final class Controller: NSObject {
         evaluate(trigger: .dockStay)
     }
 
+    /// Single point of integration — every input channel funnels
+    /// here. Builds a fresh snapshot, decides whether to clear an
+    /// active overrule, dedups against the prior snapshot, and
+    /// applies the resulting hide/show to the menu bar. The
+    /// `trigger` is preserved through to the log line so a
+    /// surprising decision can be traced back to its input.
     private func evaluate(trigger: EvalTrigger) {
         var snap = takeSnapshot()
 
@@ -302,10 +327,10 @@ final class Controller: NSObject {
         // Suppress AX nil-title evals so the bar doesn't flicker on
         // every keystroke / focus shift. Non-AX triggers (front_app,
         // dock_fs, dock_stay, adapter, start) still go through with
-        // nil so legitimate app/state changes aren't lost. Runs before
-        // the overrule reset so a suppressed event doesn't silently
-        // clear a manual overrule.
-        if trigger == .window, snap.frontWindowTitle == nil {
+        // nil so legitimate app/state changes aren't lost. When an
+        // overrule is active we also let AX through — the focusEpoch
+        // bump on a real focus change is the signal that clears it.
+        if trigger == .window, snap.frontWindowTitle == nil, overrule == .auto {
             Log.controller.debug(
                 "→ eval_skipped_no_window trig=\(trigger.rawValue, privacy: .public)",
             )
@@ -322,7 +347,16 @@ final class Controller: NSObject {
             snap.overrule = .auto
         }
 
-        guard snap != lastSnapshot else {
+        // Dedup the apply + log on decision-relevant fields only.
+        // A focus-only delta (focusEpoch bumped, nothing else
+        // changed, overrule stable) refreshes lastSnapshot's epoch
+        // so the next signalsEqual is comparable, but doesn't
+        // re-emit a snapshot line for state the user already saw.
+        if let last = lastSnapshot,
+           snap.decisionEqual(last),
+           snap.overrule == last.overrule
+        {
+            lastSnapshot = snap
             Log.controller.debug(
                 "→ eval_skipped trig=\(trigger.rawValue, privacy: .public)",
             )
@@ -334,19 +368,22 @@ final class Controller: NSObject {
         logSnapshot(snap, trigger: trigger)
     }
 
+    /// Captures a consistent snapshot of every input the decision
+    /// reads, plus `focusEpoch` (so `signalsEqual` can spot tab
+    /// switches) and the current `overrule`. Pure function of
+    /// `Controller`'s cached state plus a single fresh AX/CG
+    /// probe — never mutates anything.
     private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let frontName = frontApp?.localizedName ?? "(unknown)"
         let frontBundle = frontApp?.bundleIdentifier
-        // Skip the AX/CGWindow walk when an earlier gate will
-        // short-circuit anyway. Pulled fresh otherwise — AX state
-        // drifts within an app (tab switches, page nav) so the title
-        // can't be cached on `frontApp` change alone.
-        let needsTitle = dockFs.isFullScreen
-            && isPlaying
-            && frontPID != nil
-            && nowPlayingPID != nil
+        // Probe whenever a FS frontmost app exists. Can't gate on
+        // `isPlaying` — the title is also `signalsEqual`'s delta
+        // signal for tab-switch overrule clearing. Gate 1
+        // (not_fullscreen) still avoids the probe in the common
+        // non-FS case.
+        let needsTitle = dockFs.isFullScreen && frontPID != nil
         let probe: WindowTitleProbe = needsTitle
             ? visibleWindowTitle(for: frontApp?.processIdentifier)
             : .skipped
@@ -364,6 +401,7 @@ final class Controller: NSObject {
             nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
             nowPlayingTitle: nowPlayingTitle,
+            focusEpoch: axWatcher.focusEpoch,
             overrule: overrule,
         )
     }
