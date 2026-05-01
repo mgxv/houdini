@@ -156,6 +156,17 @@ final class Controller: NSObject {
             }
         }
 
+        /// Log verb that matches the effective outcome — so an active
+        /// overrule reads as `hide(force_hide)` / `show(force_show)`
+        /// instead of the underlying daemon decision.
+        var effectiveTag: String {
+            switch overrule {
+            case .forceHide: "hide(force_hide)"
+            case .forceShow: "show(force_show)"
+            case .auto: decision.tag
+            }
+        }
+
         /// Equality ignoring `overrule` — distinguishes a real state
         /// change from a heartbeat so no-op input can't clear an
         /// active overrule.
@@ -359,7 +370,7 @@ final class Controller: NSObject {
 
     /// Two scannable lines for the unified log:
     ///
-    ///   → {hide|show(reason)}  trig=<src>  appMatch=<…>  front_tx=<head>[…]
+    ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}  trig=<src>  appMatch=<…>  front_tx=<head>[…]
     ///   → np_tx=<head>[…]
     ///
     /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
@@ -375,7 +386,7 @@ final class Controller: NSObject {
     }
 
     private static func formatSnapshotHead(_ snap: Snapshot, trigger: EvalTrigger) -> String {
-        let tag = snap.decision.tag
+        let tag = snap.effectiveTag
         let trig = trigger.rawValue
         let overrule = snap.overrule.rawValue
         return """
