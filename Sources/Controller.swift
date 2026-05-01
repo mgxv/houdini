@@ -76,9 +76,9 @@ enum Overrule: String {
 /// case-sensitive substring match between Now Playing's `title` and
 /// the focused window's title. Catches the "two FS Chrome windows,
 /// only one playing" case where process equality alone says hide.
-/// Lenient on missing data — if either side's title is nil/empty,
-/// fall through to hide so we don't flicker on title-lag right after
-/// focus changes.
+///
+/// Front-window-title `nil` = AX unknown → lenient hide; `""` =
+/// probe-confirmed no titled window → show(window_mismatch).
 func menuBarDecision(
     dockFs: DockFullScreenState,
     isPlaying: Bool,
@@ -105,7 +105,7 @@ func menuBarDecision(
     guard processMatch || bundleMatch else { return .showAppMismatch }
 
     if let npTitle = nowPlayingTitle, !npTitle.isEmpty,
-       let winTitle = frontWindowTitle, !winTitle.isEmpty,
+       let winTitle = frontWindowTitle,
        !winTitle.contains(npTitle)
     {
         return .showWindowMismatch
@@ -325,12 +325,13 @@ final class Controller: NSObject {
         let probe: WindowTitleProbe = needsTitle
             ? visibleWindowTitle(for: frontApp?.processIdentifier)
             : .skipped
+        let frontWindowTitle: String? = probe.status == .empty ? "" : probe.title
 
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
             frontBundle: frontBundle,
-            frontWindowTitle: probe.title,
+            frontWindowTitle: frontWindowTitle,
             frontWindowProbeStatus: probe.status,
             dockFs: dockFs,
             isPlaying: isPlaying,
@@ -410,7 +411,7 @@ final class Controller: NSObject {
         let app = NSWorkspace.shared.frontmostApplication
         let pid = app?.processIdentifier ?? 0
         let appName = quoted(app?.localizedName ?? "(unknown)")
-        let title = quoted(windowTitle(forElement: element) ?? "")
+        let title = formatNullableString(windowTitle(forElement: element))
         return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
 
