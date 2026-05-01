@@ -370,12 +370,8 @@ final class Controller: NSObject {
     private func logSnapshot(_ snap: Snapshot, trigger: EvalTrigger) {
         let head = Self.formatSnapshotHead(snap, trigger: trigger)
         let np = Self.formatSnapshotNowPlaying(snap)
-        Log.controller.info(
-            """
-            → \(head, privacy: .public)
-            → \(np, privacy: .public)
-            """,
-        )
+        Log.controller.info("→ \(head, privacy: .public)")
+        Log.controller.info("→ \(np, privacy: .public)")
     }
 
     private static func formatSnapshotHead(_ snap: Snapshot, trigger: EvalTrigger) -> String {
