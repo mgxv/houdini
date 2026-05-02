@@ -227,8 +227,10 @@ final class AXWatcher {
     /// Monotonic counter of distinct focused-element shifts.
     /// Folded into `Controller.Snapshot` so `signalsEqual`
     /// detects tab switches even when the window title is stable
-    /// across them — otherwise an active overrule never clears on
-    /// `.window` triggers in that case.
+    /// across them — otherwise the no-context `globalOverrule`
+    /// fallback would never clear on `.window` triggers in that
+    /// case. The per-tab `overrideMap` is keyed on the title, so
+    /// a tab switch already moves it out of scope by key change.
     private(set) var focusEpoch: UInt64 = 0
 
     /// CFEqual baseline for `updateFocusEpoch`. Reset on
@@ -327,7 +329,8 @@ final class AXWatcher {
     private func updateFocusEpoch(notification: String, element: AXUIElement) {
         // Title-changed never counts: subtitle/timer elements fire
         // AXTitleChanged on the same focused element during
-        // playback and would clear an active override every tick.
+        // playback and would clear the `globalOverrule` fallback
+        // every tick.
         guard notification == (kAXFocusedWindowChangedNotification as String)
             || notification == (kAXFocusedUIElementChangedNotification as String)
         else { return }
