@@ -124,17 +124,15 @@ final class Controller: NSObject {
         }
 
         /// Equality on fields that drive the menu-bar output.
-        /// Excludes `overrule` (compared explicitly by the
-        /// caller) and `focusEpoch` (delta-detection only —
-        /// bumping it on every AX focus shift would re-emit a
-        /// redundant snapshot even though nothing user-visible
-        /// changed).
+        /// Layers on `signalsEqual` (which already excludes
+        /// `overrule` + `overruleSource`) and additionally
+        /// ignores `focusEpoch` — delta-detection only, bumping
+        /// it on every AX focus shift would re-emit a redundant
+        /// snapshot even though nothing user-visible changed.
         func decisionEqual(_ other: Snapshot) -> Bool {
             var copy = self
-            copy.overrule = other.overrule
-            copy.overruleSource = other.overruleSource
             copy.focusEpoch = other.focusEpoch
-            return copy == other
+            return copy.signalsEqual(other)
         }
     }
 
