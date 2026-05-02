@@ -92,9 +92,11 @@ When any becomes false, the menu bar comes back.
                                           │
                                           ▼
                                   effectiveShouldHide
-                                (overrule: hotkey toggles
-                                 force_hide / force_show;
-                                 any other trigger → auto)
+                                (overrule: hotkey pins
+                                 force_hide / force_show
+                                 per (bundle, window title);
+                                 sticky across pause, FS hops,
+                                 app switches; auto otherwise)
                                           │
                                           ▼
                   AppleMenuBarVisibleInFullscreen (system pref)
@@ -168,9 +170,11 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 
 ## Manual override
 
-`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden. The override is one-shot: the next time you switch apps, toggle fullscreen, switch tabs, or pause/resume playback, houdini takes over again automatically.
+`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden. The override is **sticky to the tab/window** where you set it, keyed on `(bundle id, focused window title)`: pause/resume, AX title wobble, FS↔FS hops, and switching to other apps don't drop it. Switching to a *different* tab/window doesn't apply it (the daemon's auto decision wins there); coming back to the original re-applies it without another press. Press the hotkey again on the same tab to flip the pin to the opposite direction. Overrides are in-memory only and cleared on daemon restart.
 
-It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be. Press the shortcut to flip the bar; the next real event puts houdini back in charge.
+When the focused window has no AX title (Accessibility not granted, or login-window-style edges), the press becomes a one-shot fallback that clears on the next real event — preserving the original UX in that path.
+
+It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be. Press the shortcut to flip the bar; the override stays pinned to that tab until you flip it again on the same tab.
 
 ## Diagnostics
 
@@ -229,7 +233,7 @@ Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscre
 → np_tx=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
 ```
 
-The leading verb is `→ hide` or `→ show(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, or `window_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `window` (an AX focus/title event), or `hotkey` (manual override). `overrule=` is `auto` (daemon-driven), `force_hide`, or `force_show` (the hotkey's one-shot override is in effect). `appMatch=` is `process`, `bundle`, `both`, or `none` — which gate-6 path matched. `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app process check actually compares. `win=` is the focused window's AX title; `title=` on the np line is the Now Playing track title — the window-level refinement does a substring match between them. `probe=` records why the AX window-title probe ended up where it did: `ok` (got a title), `skipped` (an earlier gate short-circuited), `denied` (Accessibility not granted), `ax_failed` (AX returned an unexpected error — see `houdini logs` for the specific code), or `empty` (no matching on-screen window or title was empty).
+The leading verb is `→ hide` or `→ show(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, or `window_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `window` (an AX focus/title event), or `hotkey` (manual override). `overrule=` is `auto` (daemon-driven), or `force_hide`/`force_show` followed by `(sticky)` (per-tab pinned via the hotkey, lives in `overrideMap`) or `(global)` (no-key fallback used when AX permission or window title isn't available; auto-clears on the next signal change). `appMatch=` is `process`, `bundle`, `both`, or `none` — which gate-6 path matched. `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app process check actually compares. `win=` is the focused window's AX title; `title=` on the np line is the Now Playing track title — the window-level refinement does a substring match between them. `probe=` records why the AX window-title probe ended up where it did: `ok` (got a title), `skipped` (an earlier gate short-circuited), `denied` (Accessibility not granted), `ax_failed` (AX returned an unexpected error — see `houdini logs` for the specific code), or `empty` (no matching on-screen window or title was empty).
 
 Each input also leaves a debug breadcrumb at the boundary, so a wrong decision can be traced back to the data that drove it: `→ np_rx …` per Now Playing event from mediaremote-adapter, `→ front_rx …` when AppKit reports a new frontmost app, `→ dock_rx …` per parsed Dock event, `→ ax_rx …` per AX focus/title notification, and `→ eval_skipped trig=…` / `→ eval_skipped_no_window trig=…` when the evaluation produced no change.
 
@@ -241,7 +245,7 @@ Hide requires all of: `fs=yes`, the frontmost `pid` matching `fsPid`, `play=yes`
 - **`np_tx=[pid=null,...]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media-session metadata) never register with the system Now Playing widget.
 - **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
 - **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
-- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission (`probe=denied`) the check falls through to hide — the daemon can't distinguish window-level cases. `probe=ax_failed` instead means AX is misbehaving for this app right now; check `houdini logs` for the specific AX error code. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘M` to flip the bar (see [Manual override](#manual-override)); the next real event yields control back to the daemon.
+- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission (`probe=denied`) the check falls through to hide — the daemon can't distinguish window-level cases. `probe=ax_failed` instead means AX is misbehaving for this app right now; check `houdini logs` for the specific AX error code. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘M` to flip the bar (see [Manual override](#manual-override)). The override stays pinned to that tab; press again on the same tab to flip the pin back.
 
 ### Is it actually running?
 

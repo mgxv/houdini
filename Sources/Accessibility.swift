@@ -157,6 +157,24 @@ func visibleWindowTitle(for pid: pid_t?) -> WindowTitleProbe {
     return WindowTitleProbe(title: nil, status: .empty)
 }
 
+/// Strips browser-injected annotations that wobble while the
+/// underlying tab is unchanged — Chrome's ` - Audio playing` /
+/// ` - Audio muted` suffix and `(N) ` notification-count prefix.
+/// Used as the keying basis for `Controller.overrideMap` so the
+/// wobble doesn't drop a sticky override.
+func normalizeWindowTitle(_ title: String) -> String {
+    var t = title
+    for suffix in [" - Audio playing", " - Audio muted"] {
+        if let r = t.range(of: suffix) {
+            t.removeSubrange(r)
+        }
+    }
+    if let m = t.range(of: #"^\(\d+\)\s+"#, options: .regularExpression) {
+        t.removeSubrange(m)
+    }
+    return t.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 /// Walks from any AX element up to its enclosing window and returns
 /// the window's AX title. If `element` is itself a window
 /// (`kAXWindowRole`), reads its title directly. Used to surface the
@@ -209,8 +227,10 @@ final class AXWatcher {
     /// Monotonic counter of distinct focused-element shifts.
     /// Folded into `Controller.Snapshot` so `signalsEqual`
     /// detects tab switches even when the window title is stable
-    /// across them — otherwise an active overrule never clears on
-    /// `.window` triggers in that case.
+    /// across them — otherwise the no-context `globalOverrule`
+    /// fallback would never clear on `.window` triggers in that
+    /// case. The per-tab `overrideMap` is keyed on the title, so
+    /// a tab switch already moves it out of scope by key change.
     private(set) var focusEpoch: UInt64 = 0
 
     /// CFEqual baseline for `updateFocusEpoch`. Reset on
@@ -309,7 +329,8 @@ final class AXWatcher {
     private func updateFocusEpoch(notification: String, element: AXUIElement) {
         // Title-changed never counts: subtitle/timer elements fire
         // AXTitleChanged on the same focused element during
-        // playback and would clear an active override every tick.
+        // playback and would clear the `globalOverrule` fallback
+        // every tick.
         guard notification == (kAXFocusedWindowChangedNotification as String)
             || notification == (kAXFocusedUIElementChangedNotification as String)
         else { return }

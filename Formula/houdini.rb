@@ -69,9 +69,16 @@ class Houdini < Formula
       ---------------------------------------------------------------
       ⌃⌥⌘M (Ctrl+Option+Cmd+M) flips the menu bar regardless of
       what the daemon decided — force-hide if showing, force-show
-      if hidden. One-shot: the next real event (frontmost change,
-      fullscreen toggle, AX focus, Now Playing update) yields
-      control back to the daemon.
+      if hidden. The override is sticky to the tab/window where
+      you set it (keyed on bundle id + focused window title):
+      pause/resume, AX title wobble, FS↔FS hops, and switching
+      to other apps keep it pinned. Switching to a different tab
+      doesn't apply it there; coming back re-applies without
+      another press. In-memory only; cleared on daemon restart.
+
+      When the focused window has no AX title (Accessibility not
+      granted, or edge cases like login-window) the press falls
+      through to a one-shot that clears on the next real event.
 
       Useful when AX title-changed events are delayed or missed
       and the window-title gate gets stuck on stale state.
