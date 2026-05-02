@@ -157,6 +157,24 @@ func visibleWindowTitle(for pid: pid_t?) -> WindowTitleProbe {
     return WindowTitleProbe(title: nil, status: .empty)
 }
 
+/// Strips browser-injected annotations that wobble while the
+/// underlying tab is unchanged — Chrome's ` - Audio playing` /
+/// ` - Audio muted` suffix and `(N) ` notification-count prefix.
+/// Used as the keying basis for `Controller.overrideMap` so the
+/// wobble doesn't drop a sticky override.
+func normalizeWindowTitle(_ title: String) -> String {
+    var t = title
+    for suffix in [" - Audio playing", " - Audio muted"] {
+        if let r = t.range(of: suffix) {
+            t.removeSubrange(r)
+        }
+    }
+    if let m = t.range(of: #"^\(\d+\)\s+"#, options: .regularExpression) {
+        t.removeSubrange(m)
+    }
+    return t.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 /// Walks from any AX element up to its enclosing window and returns
 /// the window's AX title. If `element` is itself a window
 /// (`kAXWindowRole`), reads its title directly. Used to surface the

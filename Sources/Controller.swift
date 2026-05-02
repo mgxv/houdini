@@ -1,41 +1,12 @@
 // Fuses Now Playing state and Dock-reported fullscreen-Space state
-// into one decision, only writing the menu-bar pref when that decision
-// actually changes.
+// into one decision, only writing the menu-bar pref when that
+// decision actually changes. The pure decision logic lives in
+// `MenuBarDecision.swift`; this file orchestrates inputs, applies
+// the verdict to the menu bar, and surfaces snapshots in the log.
 
 import Cocoa
 
-enum MenuBarDecision {
-    case hide
-    case showNotFullScreen
-    case showNotPlaying
-    case showNoFrontPid
-    case showNoNowPlayingPid
-    case showFrontNotFsOwner
-    case showAppMismatch
-    case showWindowMismatch
-
-    var shouldHide: Bool {
-        if case .hide = self { return true }
-        return false
-    }
-
-    /// The reason as a short identifier — `hide` or
-    /// `show(<reason>)`. The `→ ` log prefix is added by the
-    /// formatter, not stored here, so consumers that want the bare
-    /// reason (e.g. for a non-log surface) don't have to strip it.
-    var tag: String {
-        switch self {
-        case .hide: "hide"
-        case .showNotFullScreen: "show(not_fullscreen)"
-        case .showNotPlaying: "show(not_playing)"
-        case .showNoFrontPid: "show(no_front_pid)"
-        case .showNoNowPlayingPid: "show(no_now_playing_pid)"
-        case .showFrontNotFsOwner: "show(front_not_fs_owner)"
-        case .showAppMismatch: "show(app_mismatch)"
-        case .showWindowMismatch: "show(window_mismatch)"
-        }
-    }
-}
+// MARK: - File-level types
 
 enum EvalTrigger: String {
     case start
@@ -56,65 +27,29 @@ enum Overrule: String {
     case forceShow = "force_show"
 }
 
-/// `frontPID.isSameApp(asFSOwnerPID: dockFs.pid)` is the multi-display
-/// gate: if FS Chrome is on display 2 but the user is focused on a
-/// windowed app on display 1, the front PID won't resolve to the same
-/// responsible app as the Dock-reported FS owner and we keep the menu
-/// bar visible.
-///
-/// Same-app-as-Now-Playing tests (process-level — either is sufficient):
-///   1. Responsibility-PID mapping via the kernel syscall
-///      (`FrontmostPID.isSameProcess(as:)`), which handles helper
-///      processes (WebKit.GPU resolves to Safari) without adapter
-///      cooperation.
-///   2. Frontmost bundle id matches Now Playing's
-///      `parentApplicationBundleIdentifier` — MediaRemote's direct
-///      assertion of the owning app, a fallback if the responsibility
-///      syscall regresses.
-///
-/// Window-level refinement runs only after the process check passes:
-/// case-sensitive substring match between Now Playing's `title` and
-/// the focused window's title. Catches the "two FS Chrome windows,
-/// only one playing" case where process equality alone says hide.
-///
-/// Front-window-title `nil` = AX unknown → lenient hide; `""` =
-/// probe-confirmed no titled window → show(window_mismatch).
-func menuBarDecision(
-    dockFs: DockFullScreenState,
-    isPlaying: Bool,
-    frontPID: FrontmostPID?,
-    frontBundle: String?,
-    frontWindowTitle: String?,
-    nowPlayingPID: NowPlayingPID?,
-    nowPlayingParentBundle: String?,
-    nowPlayingTitle: String?,
-) -> MenuBarDecision {
-    guard dockFs.isFullScreen else { return .showNotFullScreen }
-    guard isPlaying else { return .showNotPlaying }
-    guard let frontPID else { return .showNoFrontPid }
-    guard let nowPlayingPID else { return .showNoNowPlayingPid }
-
-    guard let dockFsPID = dockFs.pid else { return .showFrontNotFsOwner }
-    guard frontPID.isSameApp(asFSOwnerPID: dockFsPID) else { return .showFrontNotFsOwner }
-
-    let processMatch = frontPID.isSameProcess(as: nowPlayingPID)
-    let bundleMatch: Bool = {
-        guard let parent = nowPlayingParentBundle, !parent.isEmpty else { return false }
-        return parent == frontBundle
-    }()
-    guard processMatch || bundleMatch else { return .showAppMismatch }
-
-    if let npTitle = nowPlayingTitle, !npTitle.isEmpty,
-       let winTitle = frontWindowTitle,
-       !winTitle.contains(npTitle)
-    {
-        return .showWindowMismatch
-    }
-    return .hide
+/// Tab/window identity for `Controller.overrideMap`. `windowTitle`
+/// is the focused window's normalized AX title — the per-tab
+/// signal, since browsers put the page name there. `frontBundle`
+/// guards against same-titled windows in different apps colliding.
+struct OverrideKey: Hashable {
+    let frontBundle: String?
+    let windowTitle: String
 }
+
+/// Diagnostic only — surfaces in the log line whether a snapshot's
+/// overrule came from the per-tab map or the no-context fallback.
+enum OverruleSource: Equatable {
+    case auto
+    case sticky
+    case global
+}
+
+// MARK: - Controller
 
 @MainActor
 final class Controller: NSObject {
+    // MARK: - Snapshot
+
     /// Decision is derived, so Equatable on the inputs alone dedups
     /// redundant writes without caching it. `frontPID` and
     /// `nowPlayingPID` are distinct types so the compiler blocks
@@ -141,6 +76,9 @@ final class Controller: NSObject {
         /// decision-relevant change doesn't re-emit a snapshot.
         var focusEpoch: UInt64
         var overrule: Overrule
+        /// Diagnostic only — `(sticky)` vs `(global)` in the log.
+        /// Excluded from both equality predicates.
+        var overruleSource: OverruleSource
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -174,27 +112,33 @@ final class Controller: NSObject {
             }
         }
 
-        /// Equality ignoring `overrule` — distinguishes a real state
-        /// change from a heartbeat so no-op input can't clear an
-        /// active overrule.
+        /// Equality ignoring `overrule` — distinguishes a real
+        /// state change from a heartbeat so a no-op input can't
+        /// clear the `globalOverrule` fallback. The per-tab
+        /// `overrideMap` is never auto-cleared.
         func signalsEqual(_ other: Snapshot) -> Bool {
             var copy = self
             copy.overrule = other.overrule
+            copy.overruleSource = other.overruleSource
             return copy == other
         }
 
         /// Equality on fields that drive the menu-bar output.
-        /// Excludes `overrule` (compared explicitly by the caller)
-        /// and `focusEpoch` (delta-detection only — bumping it on
-        /// every AX focus shift would re-emit a redundant snapshot
-        /// even though nothing user-visible changed).
+        /// Excludes `overrule` (compared explicitly by the
+        /// caller) and `focusEpoch` (delta-detection only —
+        /// bumping it on every AX focus shift would re-emit a
+        /// redundant snapshot even though nothing user-visible
+        /// changed).
         func decisionEqual(_ other: Snapshot) -> Bool {
             var copy = self
             copy.overrule = other.overrule
+            copy.overruleSource = other.overruleSource
             copy.focusEpoch = other.focusEpoch
             return copy == other
         }
     }
+
+    // MARK: - State
 
     private let menuBar: MenuBarToggler
     private var dockFs: DockFullScreenState = .initial
@@ -203,8 +147,21 @@ final class Controller: NSObject {
     private var nowPlayingBundle: String?
     private var nowPlayingParentBundle: String?
     private var nowPlayingTitle: String?
-    private var overrule: Overrule = .auto
+
+    /// Per-tab pinned overrides. Sticky for the daemon's lifetime
+    /// — never auto-cleared, only replaced by a hotkey press in
+    /// the same context.
+    private var overrideMap: [OverrideKey: Overrule] = [:]
+
+    /// One-shot fallback used when no `OverrideKey` is computable
+    /// (AX denied, or focused window has no title). Auto-cleared
+    /// by the next real signal change so the hotkey still works
+    /// without AX permission.
+    private var globalOverrule: Overrule = .auto
+
     private var lastSnapshot: Snapshot?
+
+    // MARK: - Watchers
 
     private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] event in
         self?.handleDockEvent(event)
@@ -232,6 +189,8 @@ final class Controller: NSObject {
     private lazy var hotkeyWatcher = HotkeyWatcher { [weak self] in
         self?.toggleOverrule()
     }
+
+    // MARK: - Lifecycle
 
     init(menuBar: MenuBarToggler) {
         self.menuBar = menuBar
@@ -262,17 +221,13 @@ final class Controller: NSObject {
         HotkeyState.clear()
     }
 
+    // MARK: - Input handlers
+
     @objc private func onFrontAppChange(_: Notification) {
         let app = NSWorkspace.shared.frontmostApplication
         Log.controller.debug("→ \(Self.formatFrontChange(app), privacy: .public)")
         axWatcher.attach(pid: app?.processIdentifier)
         evaluate(trigger: .frontApp)
-    }
-
-    private func toggleOverrule() {
-        let hidden = lastSnapshot?.effectiveShouldHide ?? false
-        overrule = hidden ? .forceShow : .forceHide
-        evaluate(trigger: .hotkey)
     }
 
     func updateMedia(_ snapshot: NowPlayingSnapshot) {
@@ -313,9 +268,56 @@ final class Controller: NSObject {
         evaluate(trigger: .dockStay)
     }
 
+    // MARK: - Override handling
+
+    /// Flips the bar against its current effective state and pins
+    /// that choice under the current key. Falls through to
+    /// `globalOverrule` when no key is computable.
+    private func toggleOverrule() {
+        let snap = takeSnapshot()
+        let next: Overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
+
+        if let key = overrideKey(forBundle: snap.frontBundle, windowTitle: snap.frontWindowTitle) {
+            overrideMap[key] = next
+            // Sticky takes priority; drop any stale fallback.
+            globalOverrule = .auto
+        } else {
+            globalOverrule = next
+        }
+        evaluate(trigger: .hotkey)
+    }
+
+    /// nil when the focused window has no usable AX title — the
+    /// caller falls through to `globalOverrule`.
+    private func overrideKey(forBundle bundle: String?, windowTitle: String?) -> OverrideKey? {
+        guard let title = windowTitle, !title.isEmpty else { return nil }
+        let normalized = normalizeWindowTitle(title)
+        guard !normalized.isEmpty else { return nil }
+        return OverrideKey(frontBundle: bundle, windowTitle: normalized)
+    }
+
+    /// Map first (sticky), then `globalOverrule` (one-shot),
+    /// then `.auto`.
+    private func resolveOverrule(
+        frontBundle: String?,
+        frontWindowTitle: String?,
+    ) -> (Overrule, OverruleSource) {
+        if let key = overrideKey(forBundle: frontBundle, windowTitle: frontWindowTitle),
+           let stickied = overrideMap[key]
+        {
+            return (stickied, .sticky)
+        }
+        if globalOverrule != .auto {
+            return (globalOverrule, .global)
+        }
+        return (.auto, .auto)
+    }
+
+    // MARK: - Evaluation core
+
     /// Single point of integration — every input channel funnels
-    /// here. Builds a fresh snapshot, decides whether to clear an
-    /// active overrule, dedups against the prior snapshot, and
+    /// here. Builds a fresh snapshot, decides whether to clear the
+    /// no-context fallback, dedups against the prior snapshot, and
     /// applies the resulting hide/show to the menu bar. The
     /// `trigger` is preserved through to the log line so a
     /// surprising decision can be traced back to its input.
@@ -329,22 +331,26 @@ final class Controller: NSObject {
         // dock_fs, dock_stay, adapter, start) still go through with
         // nil so legitimate app/state changes aren't lost. When an
         // overrule is active we also let AX through — the focusEpoch
-        // bump on a real focus change is the signal that clears it.
-        if trigger == .window, snap.frontWindowTitle == nil, overrule == .auto {
+        // bump on a real focus change is the signal that clears the
+        // global fallback.
+        if trigger == .window, snap.frontWindowTitle == nil, snap.overrule == .auto {
             Log.controller.debug(
                 "→ eval_skipped_no_window trig=\(trigger.rawValue, privacy: .public)",
             )
             return
         }
 
-        // Return control to the daemon only on a real state change.
-        // Without the signalsEqual guard, an adapter heartbeat or AX
-        // focus refresh (constant during playback, identical fields)
-        // would clear an active force_hide / force_show on every tick.
+        // Auto-clear the one-shot fallback on real state changes.
+        // The per-tab `overrideMap` is intentionally sticky.
         let signalsChanged = lastSnapshot.map { !snap.signalsEqual($0) } ?? true
-        if trigger != .hotkey, signalsChanged {
-            overrule = .auto
-            snap.overrule = .auto
+        if trigger != .hotkey, signalsChanged, globalOverrule != .auto {
+            globalOverrule = .auto
+            let (resolved, source) = resolveOverrule(
+                frontBundle: snap.frontBundle,
+                frontWindowTitle: snap.frontWindowTitle,
+            )
+            snap.overrule = resolved
+            snap.overruleSource = source
         }
 
         // Dedup the apply + log on decision-relevant fields only.
@@ -370,9 +376,9 @@ final class Controller: NSObject {
 
     /// Captures a consistent snapshot of every input the decision
     /// reads, plus `focusEpoch` (so `signalsEqual` can spot tab
-    /// switches) and the current `overrule`. Pure function of
-    /// `Controller`'s cached state plus a single fresh AX/CG
-    /// probe — never mutates anything.
+    /// switches) and the resolved overrule for this snapshot's
+    /// context. Pure function of `Controller`'s cached state plus
+    /// a single fresh AX/CG probe — never mutates anything.
     private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
@@ -389,6 +395,11 @@ final class Controller: NSObject {
             : .skipped
         let frontWindowTitle: String? = probe.status == .empty ? "" : probe.title
 
+        let (resolvedOverrule, overruleSource) = resolveOverrule(
+            frontBundle: frontBundle,
+            frontWindowTitle: frontWindowTitle,
+        )
+
         return Snapshot(
             frontPID: frontPID,
             frontName: frontName,
@@ -402,7 +413,8 @@ final class Controller: NSObject {
             nowPlayingParentBundle: nowPlayingParentBundle,
             nowPlayingTitle: nowPlayingTitle,
             focusEpoch: axWatcher.focusEpoch,
-            overrule: overrule,
+            overrule: resolvedOverrule,
+            overruleSource: overruleSource,
         )
     }
 
@@ -424,10 +436,12 @@ final class Controller: NSObject {
         Log.controller.info("→ \(np, privacy: .public)")
     }
 
+    // MARK: - Log formatting — snapshot lines
+
     private static func formatSnapshotHead(_ snap: Snapshot, trigger: EvalTrigger) -> String {
         let tag = snap.effectiveTag
         let trig = trigger.rawValue
-        let overrule = snap.overrule.rawValue
+        let overrule = formatOverrule(snap.overrule, source: snap.overruleSource)
         return """
         \(tag)  trig=\(trig) overrule=\(overrule) \
         appMatch=\(formatAppMatch(snap)) front_tx=\(formatFront(snap))
@@ -436,6 +450,20 @@ final class Controller: NSObject {
 
     private static func formatSnapshotNowPlaying(_ snap: Snapshot) -> String {
         "np_tx=\(formatNowPlaying(snap))"
+    }
+
+    /// `auto` / `force_hide(sticky)` / `force_show(global)` etc.
+    /// — distinguishes per-tab from one-shot in the log.
+    private static func formatOverrule(_ overrule: Overrule, source: OverruleSource) -> String {
+        switch overrule {
+        case .auto: "auto"
+        case .forceHide, .forceShow:
+            switch source {
+            case .auto: overrule.rawValue
+            case .sticky: "\(overrule.rawValue)(sticky)"
+            case .global: "\(overrule.rawValue)(global)"
+            }
+        }
     }
 
     /// Which gate-7 path matched (process / bundle / both / none) —
@@ -455,24 +483,6 @@ final class Controller: NSObject {
         case (false, true): return "bundle"
         case (false, false): return "none"
         }
-    }
-
-    private static func formatFrontChange(_ app: NSRunningApplication?) -> String {
-        let pid = formatNullable(app?.processIdentifier)
-        let bundle = formatNullableString(app?.bundleIdentifier)
-        let name = quoted(app?.localizedName ?? "(unknown)")
-        return "front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
-    }
-
-    /// One line per AX notification, with the focused element's
-    /// containing window title surfaced — lets you correlate a
-    /// hide/show decision to the AX event that triggered it.
-    private static func formatAXEvent(name: String, element: AXUIElement) -> String {
-        let app = NSWorkspace.shared.frontmostApplication
-        let pid = formatNullable(app?.processIdentifier)
-        let appName = quotedNullable(app?.localizedName)
-        let title = formatNullableString(windowTitle(forElement: element))
-        return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
 
     private static func formatFront(_ snap: Snapshot) -> String {
@@ -498,6 +508,28 @@ final class Controller: NSObject {
         let title = formatNullableString(snap.nowPlayingTitle)
         return "\(head)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play),title=\(title)]"
     }
+
+    // MARK: - Log formatting — boundary breadcrumbs
+
+    private static func formatFrontChange(_ app: NSRunningApplication?) -> String {
+        let pid = formatNullable(app?.processIdentifier)
+        let bundle = formatNullableString(app?.bundleIdentifier)
+        let name = quoted(app?.localizedName ?? "(unknown)")
+        return "front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
+    }
+
+    /// One line per AX notification, with the focused element's
+    /// containing window title surfaced — lets you correlate a
+    /// hide/show decision to the AX event that triggered it.
+    private static func formatAXEvent(name: String, element: AXUIElement) -> String {
+        let app = NSWorkspace.shared.frontmostApplication
+        let pid = formatNullable(app?.processIdentifier)
+        let appName = quotedNullable(app?.localizedName)
+        let title = formatNullableString(windowTitle(forElement: element))
+        return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
+    }
+
+    // MARK: - Log formatting — string utilities
 
     /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →
     /// `WebKit.GPU`. Returns nil for nil/empty so the caller can
