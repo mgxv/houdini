@@ -31,14 +31,12 @@ enum Overrule: String {
 /// is the focused window's normalized AX title — the per-tab
 /// signal, since browsers put the page name there. `frontBundle`
 /// guards against same-titled windows in different apps colliding.
-/// `nowPlayingTitle` is captured at pin time as a second match
-/// axis: HBO Max (and other episode-based players) roll the window
-/// title per episode but keep the Now Playing title stable as the
-/// show name, so falling back to NP-title equality preserves the
-/// pin across episodes when the window title rolls.
 struct OverrideKey: Hashable {
     let frontBundle: String?
     let windowTitle: String
+    /// Episode-based players (HBO Max etc.) roll the window title
+    /// per episode but keep this stable as the show name —
+    /// a second match axis at lookup time.
     let nowPlayingTitle: String?
 
     init(
@@ -53,8 +51,6 @@ struct OverrideKey: Hashable {
 }
 
 extension OverrideKey {
-    /// True if this key's window title matches the queried one under
-    /// the same bundle. nil/empty queried titles never match.
     func matchesByWindow(
         frontBundle queryBundle: String?,
         windowTitle queryTitle: String?,
@@ -63,10 +59,8 @@ extension OverrideKey {
         return frontBundle == queryBundle && windowTitle == q
     }
 
-    /// True if this key's stored NP title matches the queried one
-    /// under the same bundle. nil/empty on either side never matches —
-    /// keeps a no-NP-at-pin-time entry from collapsing onto every
-    /// future no-NP query.
+    /// nil/empty on either side returns false — otherwise every
+    /// no-NP key would match every no-NP query and collide.
     func matchesByNowPlaying(
         frontBundle queryBundle: String?,
         nowPlayingTitle queryTitle: String?,
@@ -76,20 +70,18 @@ extension OverrideKey {
         return frontBundle == queryBundle && stored == q
     }
 
-    /// Two keys overlap when they're for the same app and either title
-    /// axis would match. Used at re-pin to drop stale entries before
-    /// inserting, so the same logical context (re-pinning on a
-    /// different episode of the same show, etc.) doesn't accumulate
-    /// contradictory overrides.
+    /// Same bundle + either title axis matching. Used at re-pin to
+    /// drop stale entries so contradictory pins can't coexist.
     func overlaps(_ other: OverrideKey) -> Bool {
-        matchesByWindow(
+        let windowMatch = matchesByWindow(
             frontBundle: other.frontBundle,
             windowTitle: other.windowTitle,
         )
-            || matchesByNowPlaying(
-                frontBundle: other.frontBundle,
-                nowPlayingTitle: other.nowPlayingTitle,
-            )
+        let nowPlayingMatch = matchesByNowPlaying(
+            frontBundle: other.frontBundle,
+            nowPlayingTitle: other.nowPlayingTitle,
+        )
+        return windowMatch || nowPlayingMatch
     }
 }
 
@@ -327,11 +319,9 @@ final class Controller: NSObject {
 
     /// Flips the bar against its current effective state and pins
     /// that choice under the current key. Falls through to
-    /// `globalOverrule` when no key is computable. Re-pinning in
-    /// the same logical context (same bundle + matching window or
-    /// NP title) replaces the prior entry so the map can't hold
-    /// contradictory overrides for what the user perceives as the
-    /// same surface.
+    /// `globalOverrule` when no key is computable. Re-pinning
+    /// drops fuzzy-overlapping entries first so the map never
+    /// holds contradictory pins for the same logical surface.
     private func toggleOverrule() {
         let snap = takeSnapshot()
         let next: Overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
@@ -358,58 +348,50 @@ final class Controller: NSObject {
         windowTitle: String?,
         nowPlayingTitle: String?,
     ) -> OverrideKey? {
-        guard let title = windowTitle, !title.isEmpty else { return nil }
-        let normalized = normalizeWindowTitle(title)
-        guard !normalized.isEmpty else { return nil }
-        let np: String? = (nowPlayingTitle?.isEmpty == false) ? nowPlayingTitle : nil
+        guard let normalized = Self.normalizedKeyTitle(windowTitle) else { return nil }
         return OverrideKey(
             frontBundle: bundle,
             windowTitle: normalized,
-            nowPlayingTitle: np,
+            nowPlayingTitle: Self.nilIfEmpty(nowPlayingTitle),
         )
     }
 
-    /// Map first (sticky), then `globalOverrule` (one-shot),
-    /// then `.auto`. The map scan tries window-title equality
-    /// first (more specific), then falls back to NP-title equality
-    /// — resolves the HBO-style case where window titles roll per
-    /// episode but the NP title stays stable as the show name.
-    /// Two passes over the (very small) map make the priority
-    /// deterministic regardless of dictionary iteration order.
+    /// Window-title match wins (precise tab); NP-title match is the
+    /// fallback (HBO-style episode roll). Two passes keep priority
+    /// deterministic regardless of dict iteration order.
     private func resolveOverrule(
         frontBundle: String?,
         frontWindowTitle: String?,
         nowPlayingTitle: String?,
     ) -> (Overrule, OverruleSource) {
-        let normalizedWindow: String? = {
-            guard let t = frontWindowTitle, !t.isEmpty else { return nil }
-            let n = normalizeWindowTitle(t)
-            return n.isEmpty ? nil : n
-        }()
-        let np: String? = (nowPlayingTitle?.isEmpty == false) ? nowPlayingTitle : nil
+        let win = Self.normalizedKeyTitle(frontWindowTitle)
+        let np = Self.nilIfEmpty(nowPlayingTitle)
 
-        if normalizedWindow != nil || np != nil {
-            for (key, overrule) in overrideMap
-                where key.matchesByWindow(
-                    frontBundle: frontBundle,
-                    windowTitle: normalizedWindow,
-                )
-            {
-                return (overrule, .sticky)
-            }
-            for (key, overrule) in overrideMap
-                where key.matchesByNowPlaying(
-                    frontBundle: frontBundle,
-                    nowPlayingTitle: np,
-                )
-            {
-                return (overrule, .sticky)
-            }
+        for (key, overrule) in overrideMap
+            where key.matchesByWindow(frontBundle: frontBundle, windowTitle: win)
+        {
+            return (overrule, .sticky)
+        }
+        for (key, overrule) in overrideMap
+            where key.matchesByNowPlaying(frontBundle: frontBundle, nowPlayingTitle: np)
+        {
+            return (overrule, .sticky)
         }
         if globalOverrule != .auto {
             return (globalOverrule, .global)
         }
         return (.auto, .auto)
+    }
+
+    /// `normalizeWindowTitle` + drop empty. nil/empty in → nil out.
+    private static func normalizedKeyTitle(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let n = normalizeWindowTitle(raw)
+        return n.isEmpty ? nil : n
+    }
+
+    private static func nilIfEmpty(_ s: String?) -> String? {
+        (s?.isEmpty == false) ? s : nil
     }
 
     // MARK: - Evaluation core
