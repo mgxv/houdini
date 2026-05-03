@@ -4,4 +4,4 @@
 // directly only for a hand-patch; normal version bumps go through
 // scripts/release.sh.
 
-let version = "0.15.2"
+let version = "0.16.0"
