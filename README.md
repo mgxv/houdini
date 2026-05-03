@@ -12,16 +12,18 @@
 [![Homebrew](https://img.shields.io/github/v/tag/mgxv/houdini?logo=homebrew&label=brew&color=orange&sort=semver)](https://github.com/mgxv/homebrew-houdini)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. When you switch apps, exit fullscreen, or pause, the menu bar returns. No UI; one fallback hotkey (`⌃⌥⌘M`) for the rare cases where AX events stutter and the bar gets stuck.
+A macOS background daemon that hides the menu bar when the frontmost fullscreen app is the same one playing in the system **Now Playing** widget — fullscreen YouTube, Netflix, Apple TV+, Spotify, etc. Pause, switch apps, or exit fullscreen and the bar comes back.
+
+No UI. One fallback hotkey (`⌃⌥⌘M`) for the rare cases where AX events stutter and the bar gets stuck.
 
 ## Who this is for
 
 People who keep the menu bar visible by default but want it out of the way during fullscreen media playback.
 
-macOS's native "Automatically hide and show the menu bar in full screen" pref is all-or-nothing — flip it on and the bar disappears from *every* fullscreen window, including Terminal, your editor, and Figma. houdini scopes the same behavior to "the frontmost fullscreen app is the one driving Now Playing":
+macOS's native "Automatically hide and show the menu bar in full screen" pref is all-or-nothing — flip it on and the bar disappears from *every* fullscreen window, including Terminal, your editor, and Figma. houdini scopes that behavior to "the frontmost fullscreen app is the one driving Now Playing":
 
-- **Fullscreen YouTube / Netflix / Apple TV+ / Music / QuickTime** — bar hides while playing.
-- **Fullscreen Terminal / VS Code / Figma / anything not driving Now Playing** — bar stays put.
+- **Hides** in fullscreen YouTube / Netflix / Apple TV+ / Music / QuickTime while playing.
+- **Stays put** in fullscreen Terminal, editors, Figma — anything not driving Now Playing.
 
 Pause, switch apps, or exit fullscreen, and the bar comes back.
 
@@ -29,12 +31,209 @@ Pause, switch apps, or exit fullscreen, and the bar comes back.
 
 houdini hides the menu bar only when **all** of these are true:
 
-1. An app is in native fullscreen
-2. That app is the frontmost (focused) app
-3. That same app is actively playing media via Now Playing
-4. The focused window's title contains the Now Playing track title — distinguishes between two windows of the same app, e.g. a playing FS Chrome tab vs. a different FS Chrome window.
+1. An app is in native fullscreen.
+2. That app is the frontmost (focused) app.
+3. That same app is actively playing media via Now Playing.
+4. The focused window's title contains the Now Playing track title (or vice versa). Distinguishes between two windows of the same app — e.g. a playing FS Chrome tab vs. a different FS Chrome window. The reverse direction handles native players whose window title is a shorter form of the NP string.
 
 When any becomes false, the menu bar comes back.
+
+For the signal sources and the gate-by-gate decision diagram, see [Architecture](#architecture) below.
+
+## Hardware note
+
+houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2022+).
+
+- **Notched** — the menu-bar slot is permanently reserved for the notch, so toggling fullscreen menu-bar visibility doesn't change the window's content area. Show/hide is purely visual.
+- **Non-notched** — the fullscreen window resizes by the menu-bar height each time, which reflows in-window content (e.g. a Chrome page shifts up or down).
+
+Functionally identical; only visually different.
+
+## Install
+
+```bash
+# one-time setup
+brew tap mgxv/houdini
+brew install houdini
+
+# or as a single command
+brew install mgxv/houdini/houdini
+```
+
+Then start the service:
+
+```bash
+brew services start houdini
+```
+
+### Accessibility permission
+
+Granting Accessibility lets houdini distinguish between two windows of the same app — e.g. only hide the bar when the *playing* Chrome tab is fullscreen, not a different fullscreen Chrome window.
+
+- **Granted** — full window-level differentiation.
+- **Not granted** — process-level matching only (hides the bar for any FS Chrome window when audio is playing in any of them).
+
+To grant, open System Settings → Privacy & Security → Accessibility, enable houdini, then restart the service:
+
+```bash
+brew services restart houdini
+```
+
+After `brew upgrade houdini` you'll need to re-grant — macOS treats the freshly-signed binary as a new identity, so the existing grant no longer applies.
+
+## Usage
+
+```bash
+brew services start   houdini     # start and enable at login
+brew services stop    houdini     # stop and disable
+brew services restart houdini     # stop + start
+brew services info    houdini     # state, PID, plist path
+```
+
+Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
+
+## Manual override
+
+`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden.
+
+- **Sticky to the tab/window** where you set it. Pinned on `(bundle id, focused window title, Now Playing title)`.
+- **Survives** pause/resume, AX title wobble, FS↔FS hops, and switching to other apps.
+- **Matches via window title or Now Playing title** under the same bundle. Players that roll the window title per episode but keep the show name in NP carry the pin across episodes.
+- **Doesn't apply on a different tab/window** — the daemon's auto decision wins there. Coming back to the original re-applies it without another press.
+- **Press again on the same tab** to flip the pin to the opposite direction. Re-pinning under the same context replaces the prior entry, so contradictory pins don't accumulate.
+- **In-memory only** — cleared on daemon restart.
+
+When the focused window has no AX title (Accessibility not granted, or a login-window-style edge), the press becomes a one-shot fallback that clears on the next real event — preserving the original UX in that path.
+
+It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be.
+
+## Diagnostics
+
+<details>
+<summary>Click to expand</summary>
+
+```bash
+houdini status      # version, daemon state, adapter/dock-log subprocess
+                    # health, hotkey registration, Accessibility permission
+houdini logs        # stream every houdini unified-log entry at debug level
+houdini version     # print version
+houdini help        # full usage
+```
+
+`houdini status` is the fastest way to confirm the install. It checks:
+
+- Which `houdini` is in your `$PATH` (version).
+- Whether a daemon currently holds the instance lock.
+- Whether the two subprocesses (`mediaremote-adapter`, the Dock-log `log stream`) are alive.
+- Whether the [Manual override](#manual-override) hotkey registered (`registered` / `failed` / `unknown`).
+- Whether Accessibility is granted.
+
+Exits non-zero if the daemon or either subprocess isn't running. The hotkey and accessibility lines don't affect the exit code — both are graceful-degradation features.
+
+For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
+
+### Unified log
+
+Subsystem `com.github.mgxv.houdini`, three categories:
+
+- **`controller`** — hide/show snapshots (info), per-input breadcrumbs (debug):
+  - `→ dock_rx fs=… pid=…` — parsed `Space Forces Hidden:` lines.
+  - `→ dock_rx stay_space_change` — the FS↔FS hop pulse.
+  - `→ front_rx pid=… bundle=… name=…` — AppKit `didActivateApplicationNotification`.
+  - `→ ax_rx name=… app=… pid=… window=…` — per AX focus / UI-element / title notification.
+  - `→ eval_skipped trig=…` — snapshot equal to the previous one.
+  - `→ eval_skipped_no_window trig=window` — AX-driven evaluation with a transient nil window title; suppressed so the bar doesn't flicker on every keystroke.
+- **`adapter`** — `→ np_rx type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug).
+- **`general`** — startup/shutdown notices, warnings (one-shot AX-permission notice from `noteAXError`), errors (info / error).
+
+`houdini logs` streams all three categories at debug level — no flags, one stream, ready to paste into a bug report:
+
+```bash
+houdini logs                                                              # live
+log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
+```
+
+Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
+
+</details>
+
+## Troubleshooting
+
+<details>
+<summary>Click to expand</summary>
+
+### The menu bar isn't hiding
+
+Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a snapshot:
+
+```
+→ hide  trig=adapter overrule=auto appMatch=process front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube",probe=ok]
+→ np_tx=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
+```
+
+Field reference:
+
+- **`→ hide` / `→ show(reason)`** — first guard that tripped: `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, `window_mismatch`.
+- **`trig=`** — input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `window` (an AX focus/title event), `hotkey`.
+- **`overrule=`** — `auto` (daemon-driven), or `force_hide` / `force_show` followed by `(sticky)` (per-tab pinned via the hotkey, in `overrideMap`) or `(global)` (no-key fallback used when AX or window title isn't available; auto-clears on the next signal change).
+- **`appMatch=`** — `process`, `bundle`, `both`, or `none` — which gate-6 path matched.
+- **`resp=`** — kernel's responsibility-resolved root PID; `null` for top-level apps, a PID for helpers (WebKit.GPU resolving to Safari). What the same-app process check actually compares.
+- **`win=`** — focused window's AX title; **`title=`** on the np line is the Now Playing track title.
+- **`probe=`** — why the AX window-title probe ended up where it did:
+  - `ok` — got a title.
+  - `skipped` — an earlier gate short-circuited.
+  - `denied` — Accessibility not granted.
+  - `ax_failed` — AX returned an unexpected error (see `houdini logs` for the code).
+  - `empty` — no matching on-screen window or all titles were empty.
+
+Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ front_rx`, `→ dock_rx`, `→ ax_rx`, `→ eval_skipped` — so a wrong decision can be traced back to the data that drove it.
+
+#### Common reasons a `show` is logged when you expected `hide`
+
+- **`fs=no`** (`show(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
+- **`play=no`** (`show(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
+- **front `pid=null`** (`show(no_front_pid)`) — defensive; AppKit reported no frontmost application. Rare in practice (some Lock-Screen / login-window states).
+- **`np_tx=[pid=null,…]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (browser tabs without media-session metadata) never register with the system widget.
+- **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tabbed to a different app.
+- **front bundle ≠ np parent and `resp` doesn't match the front pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
+- **`win` doesn't overlap `title`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title and the NP track share no substring in either direction. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. With AX denied (`probe=denied`) the check falls through to lenient hide; with AX granted, a real mismatch surfaces. If a delayed AX event has stuck this gate on the wrong window, press `⌃⌥⌘M` (see [Manual override](#manual-override)). For services that intentionally keep these two strings disjoint, see [HBO Max and episode-only window titles](#hbo-max-and-episode-only-window-titles) below.
+
+### Is it actually running?
+
+`houdini status` prints daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if the daemon or either subprocess isn't running. If a subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+
+### Starting clean
+
+Clear orphan subprocesses or a foreground `./houdini` you forgot about:
+
+```bash
+brew services stop houdini
+pkill -x houdini
+pkill -f mediaremote-adapter
+brew services start houdini
+```
+
+### HBO Max and episode-only window titles
+
+A few streaming services put only the *episode* name in the browser's window title and only the *show* name in Now Playing. HBO Max is the canonical case:
+
+```
+win   = "1:23:45 • HBO Max - Google Chrome - <user>"
+title = "Chernobyl"
+```
+
+Neither string contains the other in either direction, so gate 7 fires `show(window_mismatch)` every time the daemon is asked, and the menu bar stays visible the whole way through the episode.
+
+Counter-intuitively this means **granting Accessibility actually keeps the bar visible for these services**. Without Accessibility, gate 7 has no window title to compare against (`probe=denied`) and falls through to lenient hide; with Accessibility, it sees a real mismatch and refuses. There's no daemon-side fix — the two strings simply don't share enough information to align.
+
+The escape hatch is the manual override: press `⌃⌥⌘M` once on the playing tab to pin the bar hidden. The pin survives pause, AX title wobble, FS↔FS hops, and the `Audio playing` annotation Chrome adds while audio is active. But because HBO Max rewrites the window title from one episode title to the next without keeping the show name visible, the pin's NP-axis fallback can't anchor across episodes either — press `⌃⌥⌘M` again at each episode change to re-pin.
+
+</details>
+
+## Architecture
+
+<details>
+<summary>Click to expand</summary>
 
 ```
 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
@@ -85,8 +284,8 @@ When any becomes false, the menu bar comes back.
                            (process or bundle match)
                            └─ no  → show(app_mismatch)
 
-                       (7) Window title contains track title?
-                           (AX-based refinement)
+                       (7) Window title and track title overlap?
+                           (AX-based; either-direction substring)
                            └─ no  → show(window_mismatch)
 
                                           │
@@ -109,161 +308,32 @@ When any becomes false, the menu bar comes back.
 <details>
 <summary><strong>Internally</strong> — where each signal comes from</summary>
 
-- **Fullscreen state and the FS owner's PID.** Dock's `dock-visibility` log channel, tapped by spawning `/usr/bin/log stream`. The predicate filters to two message shapes:
-  - `Space Forces Hidden:` — emitted on FS entry/exit, carries the active Space's fullscreen flag and the FS app's PID.
-  - `Skipping no-op state update` — emitted on FS↔FS Space switches where Dock's own visibility doesn't need to flip; a payload-less wake-up pulse that lets us refresh the cached FS owner from `NSWorkspace.frontmostApplication`. Without this, switching directly between two fullscreen apps would keep the menu bar in the wrong state.
+**Fullscreen state and FS-owner PID — Dock's `dock-visibility` log channel.** Spawned via `/usr/bin/log stream` with a predicate that filters to:
 
-  **Why FS detection isn't AX-based.** The obvious alternative — observing `kAXFullScreenAttribute` on the focused window — was tried and rejected. AX notifications flake during fullscreen animations, and a window's `AXFullScreen` attribute is set asynchronously by the app, sometimes hundreds of milliseconds after Dock declares the transition complete; querying AX right after a Space change produced false negatives, silently missing a meaningful fraction of FS toggles. AX also misses the notification entirely for FS transitions triggered via the green stoplight button or an in-page media-player FS toggle when the app first launches. Reading from Dock's log sidesteps the race because Dock emits at decision time, before any FS-aware app has finished animating. AX is opt-in here only for window-*title* refinement, where racing to read a stable string is far more forgiving than racing to detect a state edge — and where a missed read just falls through to the lenient hide default.
-- **Frontmost app, bundle id, and responsibility-PID.** AppKit's `NSWorkspace.didActivateApplicationNotification` plus `NSWorkspace.frontmostApplication`; the responsibility-PID is read via the private `responsibility_get_pid_responsible_for_pid` syscall (declared via `@_silgen_name` in `Sources/PID.swift`) and resolves helper processes to their parent app (e.g. WebKit.GPU → Safari) so the same-app check works without adapter cooperation.
-- **Now Playing — `playing` flag, owning PID, parent bundle, and track title.** The system MediaRemote framework, via the vendored `mediaremote-adapter` subprocess (perl is on Apple's MediaRemote allowlist; an unentitled Swift binary isn't). The adapter is run in `stream` mode with `--no-diff --debounce=200 --no-artwork`; each newline-delimited JSON event is decoded into a `NowPlayingSnapshot`.
-- **Focused window's title (window-level refinement).** Accessibility, two paths working together:
-  - An `AXObserver` subscribed to `kAXFocusedWindowChangedNotification`, `kAXFocusedUIElementChangedNotification`, and per-window `kAXTitleChangedNotification` (re-pointed each time the focused window changes). Each notification fires `evaluate(.window)` so within-app focus and title changes re-evaluate the decision.
-  - On-demand window-title resolution at snapshot time: walk `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` in z-order, bridge each on-screen `CGWindowID` to its `AXUIElement` via the private `_AXUIElementGetWindow` SPI, and return the first non-empty `kAXTitleAttribute`. Z-order (rather than `kAXFocusedWindow`) is used because AX-focused window doesn't update on Space swipes, and because some apps (Chrome) put a titleless helper window ahead of the actual content window in fullscreen.
+- `Space Forces Hidden:` — emitted on FS entry/exit; carries the active Space's fullscreen flag and owner PID.
+- `Skipping no-op state update` — emitted on FS↔FS Space switches; payload-less wake-up that lets us refresh the cached owner from `NSWorkspace.frontmostApplication`.
 
-  When AX permission isn't granted the watcher is a no-op (logged once via `noteAXError`) and the daemon degrades to process-level matching only.
+Why not AX for FS state: AX notifications flake during FS animations and `kAXFullScreenAttribute` is set asynchronously by the app — sometimes hundreds of milliseconds after Dock has declared the transition complete. AX also misses some FS triggers entirely (green-stoplight, in-page media-player buttons). Dock emits at decision time. AX is opt-in here only for window-*title* refinement — racing to read a stable string is far more forgiving than racing to detect a state edge.
 
-All signals are public APIs (`responsibility_get_pid_responsible_for_pid` and `_AXUIElementGetWindow` are private SPIs; the rest are public). No entitlements required.
+**Frontmost app and responsibility-PID — AppKit + private SPI.**
 
-</details>
+- `NSWorkspace.didActivateApplicationNotification` and `NSWorkspace.frontmostApplication`.
+- `responsibility_get_pid_responsible_for_pid` (declared via `@_silgen_name` in `Sources/PID.swift`) resolves helper processes to their parent app — e.g. `WebKit.GPU` → Safari — so the same-app check works without adapter cooperation.
 
-**Hardware note.** Houdini is best on notched MacBooks (14"/16" MacBook Pro 2021+, 13"/15" MacBook Air 2022+).
+**Now Playing — vendored `mediaremote-adapter` subprocess.**
 
-- **Notched:** the menu-bar slot is permanently reserved for the notch, so toggling the fullscreen menu-bar preference doesn't change the window's content area — show/hide is purely visual.
-- **Non-notched:** the fullscreen window resizes by the menu-bar height each time, which reflows in-window content (e.g. a web page in Chrome shifts up or down by the menu-bar height).
+- perl is on Apple's MediaRemote allowlist; an unentitled Swift binary isn't. The adapter is a perl shim that loads `MediaRemoteAdapter.framework` via `dl_load_file`.
+- Run in `stream` mode with `--no-diff --debounce=200 --no-artwork`; each newline-delimited JSON event decodes into a `NowPlayingSnapshot` (playing flag, owning PID, parent bundle, track title).
 
-Functionally identical; only visually different.
+**Focused window title — Accessibility, two paths.**
 
-## Install
+- An `AXObserver` subscribed to `kAXFocusedWindowChangedNotification`, `kAXFocusedUIElementChangedNotification`, and per-window `kAXTitleChangedNotification` (re-pointed each time the focused window changes). Fires `evaluate(.window)` on every focus or title change.
+- On-demand title resolution at snapshot time: walk `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` in z-order, bridge each `CGWindowID` to its `AXUIElement` via the private `_AXUIElementGetWindow` SPI, return the first non-empty `kAXTitleAttribute`. Z-order rather than `kAXFocusedWindow` because the latter doesn't track Space swipes and Chrome puts a titleless helper window ahead of the actual content in fullscreen.
+- When AX permission isn't granted the watcher is a no-op (logged once via `noteAXError`) and the daemon degrades to process-level matching only.
 
-```bash
-# one-time setup
-brew tap mgxv/houdini
-brew install houdini
-
-# or as a single command
-brew install mgxv/houdini/houdini
-```
-
-Then start the service:
-
-```bash
-brew services start houdini
-```
-
-### Accessibility permission
-
-The first start prompts for **Accessibility permission**. Granting it lets houdini distinguish between two windows of the same app — e.g. only hide the menu bar when the *playing* Chrome tab is fullscreen, not a different fullscreen Chrome window. Without permission, the daemon falls back to process-level matching only (it'll hide the bar for any FS Chrome window when audio is playing in any of them).
-
-If you dismiss the prompt or revoke later, run `brew services restart houdini` to re-trigger it. After **`brew upgrade houdini`** you'll need to re-grant — macOS treats the freshly-signed binary as a new identity, so the existing AX grant no longer applies. Restart the service to re-prompt:
-
-```bash
-brew services restart houdini
-```
-
-## Usage
-
-```bash
-brew services start   houdini     # start and enable at login
-brew services stop    houdini     # stop and disable
-brew services restart houdini     # stop + start
-brew services info    houdini     # state, PID, plist path
-```
-
-Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
-
-## Manual override
-
-`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden. The override is **sticky to the tab/window** where you set it, keyed on `(bundle id, focused window title, Now Playing title)`: pause/resume, AX title wobble, FS↔FS hops, and switching to other apps don't drop it. Lookup matches the pin via window title *or* Now Playing title under the same bundle, so a player that rolls its window title per episode (HBO Max etc.) keeps the pin across episodes via the show name MediaRemote keeps stable. Switching to a *different* tab/window doesn't apply it (the daemon's auto decision wins there); coming back to the original re-applies it without another press. Re-pinning under the same context (same bundle + matching window or NP title) replaces the prior entry, so no contradictory pins accumulate. Press the hotkey again on the same tab to flip the pin to the opposite direction. Overrides are in-memory only and cleared on daemon restart.
-
-When the focused window has no AX title (Accessibility not granted, or login-window-style edges), the press becomes a one-shot fallback that clears on the next real event — preserving the original UX in that path.
-
-It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be. Press the shortcut to flip the bar; the override stays pinned to that tab until you flip it again on the same tab.
-
-## Diagnostics
-
-<details>
-<summary>Click to expand</summary>
-
-```bash
-houdini status                    # print version, daemon state,
-                                  # adapter/dock-log subprocess health,
-                                  # hotkey registration, and
-                                  # Accessibility permission
-houdini logs                      # stream every houdini unified-log entry
-                                  # across all categories at debug level
-                                  # (controller decisions, dock-visibility
-                                  # events, mediaremote-adapter output,
-                                  # startup notices); wraps
-                                  # `log stream --predicate …`
-houdini version                   # print version
-houdini help                      # full usage
-```
-
-`houdini status` is the fastest way to confirm the install: which version is in your `$PATH`, whether a daemon currently holds the instance lock, whether the daemon's two subprocesses (`mediaremote-adapter` and the Dock-log `log stream`) are alive, whether the [Manual override](#manual-override) hotkey registered (`registered` / `failed` / `unknown` if the daemon hasn't recorded its state yet — usually means restart it), and whether Accessibility permission is granted (without it, the daemon falls back to process-level matching only). Exits non-zero if the daemon or either subprocess isn't running, so it composes in scripts. The hotkey and accessibility lines don't affect the exit code — both are graceful-degradation features. For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
-
-Everything goes to the macOS unified log under subsystem `com.github.mgxv.houdini`, organized into three categories:
-
-- `controller` — hide/show snapshots (info), plus per-input breadcrumbs at debug:
-  - `→ dock_rx fs=… pid=…` (parsed `Space Forces Hidden:` lines) and `→ dock_rx stay_space_change` (the FS↔FS hop pulse)
-  - `→ front_rx pid=… bundle=… name=…` (each AppKit `didActivateApplicationNotification`)
-  - `→ ax_rx name=… app=… pid=… window=…` (per AX focus / UI-element / title notification — useful for correlating a hide/show with the AX event that triggered it)
-  - `→ eval_skipped trig=…` (snapshot equal to the previous one) and `→ eval_skipped_no_window trig=window` (AX-driven evaluation where the focused window's title came back nil — a transient AX state during normal interaction; suppressed so the menu bar doesn't flicker)
-- `adapter` — `→ np_rx type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug)
-- `general` — startup/shutdown notices, warnings (including the one-shot AX-permission notice from `noteAXError`), errors (info / error)
-
-`houdini logs` streams everything across all three categories at debug level — no flags, one stream, ready to copy-paste into a bug report. The system handles retention and rotation; nothing on disk to manage.
-
-```bash
-houdini logs                                              # live stream — everything, debug level
-log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
-```
-
-Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
+No entitlements required. Two private SPIs (`responsibility_get_pid_responsible_for_pid`, `_AXUIElementGetWindow`); everything else is public API.
 
 </details>
-
-## Troubleshooting
-
-<details>
-<summary>Click to expand</summary>
-
-### The menu bar isn't hiding
-
-Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a hide/show snapshot with the inputs that drove it:
-
-```
-→ hide  trig=adapter overrule=auto appMatch=process front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube",probe=ok]
-→ np_tx=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
-```
-
-The leading verb is `→ hide` or `→ show(reason)`, where reason names the first guard that tripped — one of `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, or `window_mismatch`. `trig=` names the input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `window` (an AX focus/title event), or `hotkey` (manual override). `overrule=` is `auto` (daemon-driven), or `force_hide`/`force_show` followed by `(sticky)` (per-tab pinned via the hotkey, lives in `overrideMap`) or `(global)` (no-key fallback used when AX permission or window title isn't available; auto-clears on the next signal change). `appMatch=` is `process`, `bundle`, `both`, or `none` — which gate-6 path matched. `resp=` on each side is the kernel's responsibility-resolved root PID (`null` for top-level apps, a PID for helper processes like WebKit.GPU resolving to Safari) — what the same-app process check actually compares. `win=` is the focused window's AX title; `title=` on the np line is the Now Playing track title — the window-level refinement does a substring match between them. `probe=` records why the AX window-title probe ended up where it did: `ok` (got a title), `skipped` (an earlier gate short-circuited), `denied` (Accessibility not granted), `ax_failed` (AX returned an unexpected error — see `houdini logs` for the specific code), or `empty` (no matching on-screen window or title was empty).
-
-Each input also leaves a debug breadcrumb at the boundary, so a wrong decision can be traced back to the data that drove it: `→ np_rx …` per Now Playing event from mediaremote-adapter, `→ front_rx …` when AppKit reports a new frontmost app, `→ dock_rx …` per parsed Dock event, `→ ax_rx …` per AX focus/title notification, and `→ eval_skipped trig=…` / `→ eval_skipped_no_window trig=…` when the evaluation produced no change.
-
-Hide requires all of: `fs=yes`, the frontmost `pid` matching `fsPid`, `play=yes`, frontmost/Now-Playing resolving to the same app (process or bundle match), and — when both sides have a title — the window title containing the track title. Common reasons a show is logged when you expected hide:
-
-- **`fs=no`** (`show(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons in YouTube, Netflix, QuickTime) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
-- **`play=no`** (`show(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
-- **front `pid=null`** (`show(no_front_pid)`) — defensive; AppKit reported no frontmost application. Rare in practice (some kinds of Lock-Screen / login-window state).
-- **`np_tx=[pid=null,...]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (e.g. a browser tab playing inline video with no media-session metadata) never register with the system Now Playing widget.
-- **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tab'd to a different app whose window is now in front; the menu bar belongs to the frontmost app, not to the (still-fullscreen) Space underneath.
-- **front bundle ≠ np parent and `resp` doesn't match the frontmost pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
-- **`win="…"` doesn't contain `title="…"`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title doesn't reflect the playing track. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. Without Accessibility permission (`probe=denied`) the check falls through to hide — the daemon can't distinguish window-level cases. `probe=ax_failed` instead means AX is misbehaving for this app right now; check `houdini logs` for the specific AX error code. If a delayed or missed AX title event has left this gate stuck on the wrong window, press `⌃⌥⌘M` to flip the bar (see [Manual override](#manual-override)). The override stays pinned to that tab; press again on the same tab to flip the pin back.
-
-### Is it actually running?
-
-`houdini status` prints daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if the daemon or either subprocess isn't running. If either subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
-
-### Starting clean
-
-To clear orphan subprocesses or a foreground `./houdini` you forgot about:
-
-```bash
-brew services stop houdini
-pkill -x houdini
-pkill -f mediaremote-adapter
-brew services start houdini
-```
 
 </details>
 
