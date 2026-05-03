@@ -267,4 +267,203 @@ struct OverrideKeyTests {
         reverse[k3] = .forceHide; reverse[k2] = .forceShow; reverse[k1] = .forceHide
         #expect(forward == reverse)
     }
+
+    // MARK: - nowPlayingTitle field
+
+    @Test("Hashable distinguishes by NP title (other fields equal)")
+    func hashableIncludesNP() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "A")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "B")
+        #expect(a != b)
+    }
+
+    @Test("nowPlayingTitle defaults to nil — back-compat with two-arg init")
+    func npDefaultsNil() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: nil)
+        #expect(a == b)
+    }
+}
+
+@Suite("OverrideKey.matchesByWindow")
+struct OverrideKeyMatchesByWindowTests {
+    @Test("Same bundle + same window title → true")
+    func exactMatch() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track A")
+        #expect(key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track A"))
+    }
+
+    @Test("Different bundle → false")
+    func bundleMismatch() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track")
+        #expect(!key.matchesByWindow(frontBundle: "com.y.App", windowTitle: "Track"))
+    }
+
+    @Test("Different window title → false")
+    func titleMismatch() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track A")
+        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track B"))
+    }
+
+    @Test("nil queried title → false (no match without a window context)")
+    func queryNil() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track")
+        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: nil))
+    }
+
+    @Test("Empty queried title → false")
+    func queryEmpty() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track")
+        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: ""))
+    }
+
+    @Test("Stored NP title irrelevant for window match")
+    func npIgnored() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track"))
+    }
+}
+
+@Suite("OverrideKey.matchesByNowPlaying")
+struct OverrideKeyMatchesByNPTests {
+    @Test("Same bundle + same NP title → true")
+    func exactMatch() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: "Show"))
+    }
+
+    @Test("Stored NP title nil → false (won't bridge no-NP pins)")
+    func storedNil() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: nil,
+        )
+        #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: "Show"))
+    }
+
+    @Test("Queried NP title nil → false")
+    func queryNil() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: nil))
+    }
+
+    @Test("Stored NP title empty → false")
+    func storedEmpty() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "",
+        )
+        #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: ""))
+    }
+
+    @Test("Different bundle → false even when NP titles match")
+    func bundleMismatch() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(!key.matchesByNowPlaying(frontBundle: "com.y.App", nowPlayingTitle: "Show"))
+    }
+
+    @Test("NP-title comparison is case-sensitive")
+    func caseSensitive() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: "show"))
+    }
+
+    // MARK: - Real-world parity
+
+    @Test("HBO scenario: window changes per episode, NP title stable")
+    func hboEpisodeRoll() {
+        // User pinned while watching episode 1 — both fields captured.
+        let pinned = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Euphoria S01E01 - HBO Max",
+            nowPlayingTitle: "Euphoria",
+        )
+        // Episode 2: window title changed, NP title stable.
+        #expect(!pinned.matchesByWindow(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Euphoria S01E02 - HBO Max",
+        ))
+        #expect(pinned.matchesByNowPlaying(
+            frontBundle: "com.google.Chrome",
+            nowPlayingTitle: "Euphoria",
+        ))
+    }
+}
+
+@Suite("OverrideKey.overlaps")
+struct OverrideKeyOverlapsTests {
+    @Test("Same window title → overlap (same logical pin, different NP)")
+    func sameWindow() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "A")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "B")
+        #expect(a.overlaps(b))
+        #expect(b.overlaps(a))
+    }
+
+    @Test("Same NP title → overlap (HBO-style episode roll)")
+    func sameNP() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: "Same")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: "Same")
+        #expect(a.overlaps(b))
+        #expect(b.overlaps(a))
+    }
+
+    @Test("Different bundle → no overlap even when both titles match")
+    func differentBundle() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "S")
+        let b = OverrideKey(frontBundle: "com.y", windowTitle: "W", nowPlayingTitle: "S")
+        #expect(!a.overlaps(b))
+        #expect(!b.overlaps(a))
+    }
+
+    @Test("Both NPs nil — different windows stay distinct")
+    func bothNPNilDifferentWindows() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: nil)
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: nil)
+        #expect(!a.overlaps(b))
+    }
+
+    @Test("One NP nil, other non-nil — no NP-axis bridge")
+    func oneNPNil() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: "S")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: nil)
+        #expect(!a.overlaps(b))
+        #expect(!b.overlaps(a))
+    }
+
+    @Test("Both axes match — overlap (trivially)")
+    func bothMatch() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "S")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "S")
+        #expect(a.overlaps(b))
+    }
+
+    @Test("Wholly distinct on both axes → no overlap (coexist in map)")
+    func disjoint() {
+        let a = OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: "S1")
+        let b = OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: "S2")
+        #expect(!a.overlaps(b))
+    }
 }
