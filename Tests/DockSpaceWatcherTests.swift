@@ -18,7 +18,7 @@ struct DockSpaceWatcherTests {
         appName=Ghostty name=~/Desktop space=CGSSpace(spid: 141)}]
         """
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: true, pid: FSOwnerPID(4796))))
+            == .fullScreenState(.init(isFullScreen: true, fsOwnerPID: FSOwnerPID(4796))))
     }
 
     @Test("Split View: emits fullscreen=true with the first tile pid")
@@ -33,7 +33,7 @@ struct DockSpaceWatcherTests {
         appName=Safari name=YouTube space=CGSSpace(spid: 398)}]
         """
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: true, pid: FSOwnerPID(1738))))
+            == .fullScreenState(.init(isFullScreen: true, fsOwnerPID: FSOwnerPID(1738))))
     }
 
     @Test("Exit fullscreen: ManagedSpace line → fullscreen=false, no pid")
@@ -43,7 +43,7 @@ struct DockSpaceWatcherTests {
         {uuid= fullscreen=false space=CGSSpace(spid: 1)}
         """
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: false, pid: nil)))
+            == .fullScreenState(.init(isFullScreen: false, fsOwnerPID: nil)))
     }
 
     @Test("Exit message that happens to carry a pid: extracts it")
@@ -51,7 +51,7 @@ struct DockSpaceWatcherTests {
         // Captured in the wild: some exit messages do carry a pid.
         let line = "Space Forces Hidden: 0 fullscreen=false pid=36772"
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: false, pid: FSOwnerPID(36772))))
+            == .fullScreenState(.init(isFullScreen: false, fsOwnerPID: FSOwnerPID(36772))))
     }
 
     @Test("Stay-space-change: maps to .staySpaceChange")
@@ -74,7 +74,7 @@ struct DockSpaceWatcherTests {
         // contaminates the pid extraction.
         let line = "fullscreen=true space=CGSSpace(spid: 139)"
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: true, pid: nil)))
+            == .fullScreenState(.init(isFullScreen: true, fsOwnerPID: nil)))
     }
 
     @Test("Defensive: `spid=` with equals doesn't match either")
@@ -83,6 +83,6 @@ struct DockSpaceWatcherTests {
         // regex means `spid=139` shouldn't be picked up as `pid=139`.
         let line = "fullscreen=true spid=139"
         #expect(DockSpaceWatcher.parse(line)
-            == .fullScreenState(.init(isFullScreen: true, pid: nil)))
+            == .fullScreenState(.init(isFullScreen: true, fsOwnerPID: nil)))
     }
 }

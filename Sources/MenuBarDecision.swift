@@ -39,7 +39,7 @@ enum MenuBarDecision {
     }
 }
 
-/// `appKitFrontPID.isSameApp(asFSOwnerPID: dockFs.pid)` is the multi-display
+/// `appKitFrontPID.isSameApp(asFSOwnerPID: dockFs.fsOwnerPID)` is the multi-display
 /// gate: if FS Chrome is on display 2 but the user is focused on a
 /// windowed app on display 1, the front PID won't resolve to the same
 /// responsible app as the Dock-reported FS owner and we keep the menu
@@ -77,8 +77,8 @@ func menuBarDecision(
     guard let appKitFrontPID else { return .showNoFrontPid }
     guard let nowPlayingPID else { return .showNoNowPlayingPid }
 
-    guard let dockFsPID = dockFs.pid else { return .showFrontNotFsOwner }
-    guard appKitFrontPID.isSameApp(asFSOwnerPID: dockFsPID) else { return .showFrontNotFsOwner }
+    guard let fsOwnerPID = dockFs.fsOwnerPID else { return .showFrontNotFsOwner }
+    guard appKitFrontPID.isSameApp(asFSOwnerPID: fsOwnerPID) else { return .showFrontNotFsOwner }
 
     let processMatch = appKitFrontPID.isSameProcess(as: nowPlayingPID)
     let bundleMatch: Bool = {

@@ -11,7 +11,7 @@
 // actor-isolated state so `stop()` can set it synchronously before
 // `terminate()`. An actor-isolated flag set via `Task { await … }`
 // could race the kernel signal: `handleTermination` would then
-// observe `stopping == false` during a clean shutdown and `die(...)`
+// observe `isStopping == false` during a clean shutdown and `die(...)`
 // for what is graceful.
 //
 // Pipe chunks fan in through `AsyncStream`s — readability handlers

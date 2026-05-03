@@ -312,8 +312,8 @@ final class Controller: NSObject {
         evaluate(trigger: .dockFs)
     }
 
-    /// Refreshes `dockFs.pid` so the multi-display gate doesn't
-    /// reject FS↔FS hops with a stale pid. Guarded on cached
+    /// Refreshes `dockFs.fsOwnerPID` so the multi-display gate
+    /// doesn't reject FS↔FS hops with a stale pid. Guarded on cached
     /// `isFullScreen` because the no-op fires for non-FS hops too;
     /// the line's `state` field is unreliable across transition
     /// phases. `frontmostApplication` is fresh here — the log
@@ -323,7 +323,7 @@ final class Controller: NSObject {
         guard dockFs.isFullScreen,
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return }
-        dockFs = DockFullScreenState(isFullScreen: true, pid: FSOwnerPID(pid))
+        dockFs = DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(pid))
         evaluate(trigger: .dockStay)
     }
 
@@ -594,7 +594,7 @@ final class Controller: NSObject {
         let bundle = formatNullableString(snap.appKitFrontBundle)
         let resp = formatNullable(snap.appKitFrontPID?.responsiblePID)
         let fs = snap.dockFs.isFullScreen ? "yes" : "no"
-        let fsPid = formatNullable(snap.dockFs.pid?.rawValue)
+        let fsPid = formatNullable(snap.dockFs.fsOwnerPID?.rawValue)
         let win = formatNullableString(snap.axFocusedWindowTitle)
         let probe = snap.axFocusedWindowProbeStatus.rawValue
         return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win),probe=\(probe)]"

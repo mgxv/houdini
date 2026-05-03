@@ -9,7 +9,7 @@ import Testing
 @Suite("menuBarDecision gates")
 struct MenuBarDecisionTests {
     private struct Inputs {
-        var dockFs = DockFullScreenState(isFullScreen: true, pid: FSOwnerPID(100))
+        var dockFs = DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         var isPlaying = true
         var appKitFrontPID: FrontmostPID? = .init(100)
         var appKitFrontBundle: String? = "com.example.App"
@@ -42,14 +42,14 @@ struct MenuBarDecisionTests {
     @Test("Gate 1: not fullscreen → show(not_fullscreen)")
     func gate1NotFullScreen() {
         var i = Inputs()
-        i.dockFs = .init(isFullScreen: false, pid: nil)
+        i.dockFs = .init(isFullScreen: false, fsOwnerPID: nil)
         #expect(i.decision == .showNotFullScreen)
     }
 
     @Test("Gate 1 short-circuits earlier failures")
     func gate1TakesPrecedence() {
         var i = Inputs()
-        i.dockFs = .init(isFullScreen: false, pid: nil)
+        i.dockFs = .init(isFullScreen: false, fsOwnerPID: nil)
         i.isPlaying = false
         i.appKitFrontPID = nil
         #expect(i.decision == .showNotFullScreen)
@@ -82,10 +82,10 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gate 5: FS-owner
 
-    @Test("Gate 5: nil dockFs.pid → show(front_not_fs_owner)")
+    @Test("Gate 5: nil dockFs.fsOwnerPID → show(front_not_fs_owner)")
     func gate5NilDockFsPID() {
         var i = Inputs()
-        i.dockFs = .init(isFullScreen: true, pid: nil)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: nil)
         #expect(i.decision == .showFrontNotFsOwner)
     }
 
@@ -93,7 +93,7 @@ struct MenuBarDecisionTests {
     func gate5FrontNotFsOwner() {
         var i = Inputs()
         i.appKitFrontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(200))
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(200))
         // Distinct bundles too, so isSameApp's fallback paths can't accidentally match.
         i.appKitFrontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
@@ -104,7 +104,7 @@ struct MenuBarDecisionTests {
     func gate5IdentityPasses() {
         var i = Inputs()
         i.appKitFrontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         #expect(i.decision == .hide)
     }
 
@@ -114,7 +114,7 @@ struct MenuBarDecisionTests {
     func gate6AppMismatch() {
         var i = Inputs()
         i.appKitFrontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
         i.appKitFrontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
@@ -125,7 +125,7 @@ struct MenuBarDecisionTests {
     func gate6BundleMatch() {
         var i = Inputs()
         i.appKitFrontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
         i.appKitFrontBundle = "com.same.App"
         i.nowPlayingParentBundle = "com.same.App"
@@ -136,7 +136,7 @@ struct MenuBarDecisionTests {
     func gate6ProcessMatch() {
         var i = Inputs()
         i.appKitFrontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(100)
         i.appKitFrontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
@@ -147,7 +147,7 @@ struct MenuBarDecisionTests {
     func gate6EmptyParentBundleNoBundleMatch() {
         var i = Inputs()
         i.appKitFrontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
         i.appKitFrontBundle = ""
         i.nowPlayingParentBundle = ""
