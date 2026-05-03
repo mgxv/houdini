@@ -59,15 +59,20 @@ extension OverrideKey {
         return appKitFrontBundle == queryBundle && axFocusedWindowTitle == q
     }
 
-    /// nil/empty on either side returns false — otherwise every
-    /// no-NP key would match every no-NP query and collide.
+    /// nil/empty on either side returns false. The window-title
+    /// guard anchors the match to the playing window (same invariant
+    /// as gate 7) so the pin doesn't leak to other tabs in the same
+    /// browser while the original keeps NP active in the background.
     func matchesByNowPlaying(
         appKitFrontBundle queryBundle: String,
+        axFocusedWindowTitle queryWindowTitle: String?,
         nowPlayingTitle queryTitle: String?,
     ) -> Bool {
         guard let stored = nowPlayingTitle, !stored.isEmpty else { return false }
         guard let q = queryTitle, !q.isEmpty else { return false }
-        return appKitFrontBundle == queryBundle && stored == q
+        guard appKitFrontBundle == queryBundle, stored == q else { return false }
+        guard let win = queryWindowTitle, win.contains(q) else { return false }
+        return true
     }
 
     /// Same bundle + either title axis matching. Used at re-pin to
@@ -79,6 +84,7 @@ extension OverrideKey {
         )
         let nowPlayingMatch = matchesByNowPlaying(
             appKitFrontBundle: other.appKitFrontBundle,
+            axFocusedWindowTitle: other.axFocusedWindowTitle,
             nowPlayingTitle: other.nowPlayingTitle,
         )
         return windowMatch || nowPlayingMatch
@@ -389,7 +395,11 @@ final class Controller: NSObject {
                 return (overrule, .sticky)
             }
             for (key, overrule) in overrideMap
-                where key.matchesByNowPlaying(appKitFrontBundle: bundle, nowPlayingTitle: np)
+                where key.matchesByNowPlaying(
+                    appKitFrontBundle: bundle,
+                    axFocusedWindowTitle: win,
+                    nowPlayingTitle: np,
+                )
             {
                 return (overrule, .sticky)
             }

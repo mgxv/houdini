@@ -371,14 +371,18 @@ struct OverrideKeyMatchesByWindowTests {
 
 @Suite("OverrideKey.matchesByNowPlaying")
 struct OverrideKeyMatchesByNPTests {
-    @Test("Same bundle + same NP title → true")
+    @Test("Same bundle + window contains NP title → true")
     func exactMatch() {
         let key = OverrideKey(
             appKitFrontBundle: "com.x.App",
-            axFocusedWindowTitle: "Track",
+            axFocusedWindowTitle: "Show — App",
             nowPlayingTitle: "Show",
         )
-        #expect(key.matchesByNowPlaying(appKitFrontBundle: "com.x.App", nowPlayingTitle: "Show"))
+        #expect(key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Show — App",
+            nowPlayingTitle: "Show",
+        ))
     }
 
     @Test("Stored NP title nil → false (won't bridge no-NP pins)")
@@ -388,7 +392,11 @@ struct OverrideKeyMatchesByNPTests {
             axFocusedWindowTitle: "Track",
             nowPlayingTitle: nil,
         )
-        #expect(!key.matchesByNowPlaying(appKitFrontBundle: "com.x.App", nowPlayingTitle: "Show"))
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Show",
+            nowPlayingTitle: "Show",
+        ))
     }
 
     @Test("Queried NP title nil → false")
@@ -398,7 +406,11 @@ struct OverrideKeyMatchesByNPTests {
             axFocusedWindowTitle: "Track",
             nowPlayingTitle: "Show",
         )
-        #expect(!key.matchesByNowPlaying(appKitFrontBundle: "com.x.App", nowPlayingTitle: nil))
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Show",
+            nowPlayingTitle: nil,
+        ))
     }
 
     @Test("Stored NP title empty → false")
@@ -408,37 +420,83 @@ struct OverrideKeyMatchesByNPTests {
             axFocusedWindowTitle: "Track",
             nowPlayingTitle: "",
         )
-        #expect(!key.matchesByNowPlaying(appKitFrontBundle: "com.x.App", nowPlayingTitle: ""))
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Track",
+            nowPlayingTitle: "",
+        ))
     }
 
     @Test("Different bundle → false even when NP titles match")
     func bundleMismatch() {
         let key = OverrideKey(
             appKitFrontBundle: "com.x.App",
-            axFocusedWindowTitle: "Track",
+            axFocusedWindowTitle: "Show — App",
             nowPlayingTitle: "Show",
         )
-        #expect(!key.matchesByNowPlaying(appKitFrontBundle: "com.y.App", nowPlayingTitle: "Show"))
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.y.App",
+            axFocusedWindowTitle: "Show — App",
+            nowPlayingTitle: "Show",
+        ))
     }
 
     @Test("NP-title comparison is case-sensitive")
     func caseSensitive() {
         let key = OverrideKey(
             appKitFrontBundle: "com.x.App",
-            axFocusedWindowTitle: "Track",
+            axFocusedWindowTitle: "Show — App",
             nowPlayingTitle: "Show",
         )
-        #expect(!key.matchesByNowPlaying(appKitFrontBundle: "com.x.App", nowPlayingTitle: "show"))
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Show — App",
+            nowPlayingTitle: "show",
+        ))
     }
 
     @Test("Whitespace difference → false (no normalization on NP titles)")
     func whitespaceSensitive() {
         let key = OverrideKey(
             appKitFrontBundle: "com.x.App",
-            axFocusedWindowTitle: "Track",
+            axFocusedWindowTitle: "Show — App",
             nowPlayingTitle: "Show",
         )
-        #expect(!key.matchesByNowPlaying(appKitFrontBundle: "com.x.App", nowPlayingTitle: "Show "))
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Show — App",
+            nowPlayingTitle: "Show ",
+        ))
+    }
+
+    // MARK: - Playing-window anchor
+
+    @Test("Queried window doesn't contain NP title → false (background-tab guard)")
+    func queryWindowDoesNotContainNP() {
+        let pinned = OverrideKey(
+            appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "Euphoria S01E01 - HBO Max",
+            nowPlayingTitle: "Euphoria",
+        )
+        #expect(!pinned.matchesByNowPlaying(
+            appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "(3) Inbox - Gmail - Google Chrome",
+            nowPlayingTitle: "Euphoria",
+        ))
+    }
+
+    @Test("Queried window nil → false (can't anchor without a focused window)")
+    func queryWindowNil() {
+        let key = OverrideKey(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: "Show",
+            nowPlayingTitle: "Show",
+        )
+        #expect(!key.matchesByNowPlaying(
+            appKitFrontBundle: "com.x.App",
+            axFocusedWindowTitle: nil,
+            nowPlayingTitle: "Show",
+        ))
     }
 
     // MARK: - Real-world parity
@@ -458,6 +516,7 @@ struct OverrideKeyMatchesByNPTests {
         ))
         #expect(pinned.matchesByNowPlaying(
             appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "Euphoria S01E02 - HBO Max",
             nowPlayingTitle: "Euphoria",
         ))
     }
@@ -485,12 +544,12 @@ struct OverrideKeyOverlapsTests {
     func sameNP() {
         let a = OverrideKey(
             appKitFrontBundle: "com.x",
-            axFocusedWindowTitle: "W1",
+            axFocusedWindowTitle: "Same — Episode 1",
             nowPlayingTitle: "Same",
         )
         let b = OverrideKey(
             appKitFrontBundle: "com.x",
-            axFocusedWindowTitle: "W2",
+            axFocusedWindowTitle: "Same — Episode 2",
             nowPlayingTitle: "Same",
         )
         #expect(a.overlaps(b))
@@ -606,12 +665,12 @@ struct OverrideKeyOverlapsTests {
             (
                 OverrideKey(
                     appKitFrontBundle: "com.x",
-                    axFocusedWindowTitle: "W1",
+                    axFocusedWindowTitle: "S — 1",
                     nowPlayingTitle: "S",
                 ),
                 OverrideKey(
                     appKitFrontBundle: "com.x",
-                    axFocusedWindowTitle: "W2",
+                    axFocusedWindowTitle: "S — 2",
                     nowPlayingTitle: "S",
                 ),
             ),
@@ -666,9 +725,32 @@ struct OverrideMapRepinTests {
         // Same scan resolveOverrule does on the NP-fallback pass.
         let hit = map.first { $0.key.matchesByNowPlaying(
             appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "Euphoria S01E02 - HBO Max",
             nowPlayingTitle: "Euphoria",
         ) }
         #expect(hit?.value == .forceHide)
+    }
+
+    @Test("Tab switch in same browser: NP keeps playing → no NP-axis hit")
+    func tabSwitchDoesNotLeak() {
+        let pinned = OverrideKey(
+            appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "Euphoria S01E01 - HBO Max",
+            nowPlayingTitle: "Euphoria",
+        )
+        let map: [OverrideKey: Overrule] = [pinned: .forceHide]
+
+        let windowHit = map.first { $0.key.matchesByWindow(
+            appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "(3) Inbox - Gmail - Google Chrome",
+        ) }
+        let npHit = map.first { $0.key.matchesByNowPlaying(
+            appKitFrontBundle: "com.google.Chrome",
+            axFocusedWindowTitle: "(3) Inbox - Gmail - Google Chrome",
+            nowPlayingTitle: "Euphoria",
+        ) }
+        #expect(windowHit == nil)
+        #expect(npHit == nil)
     }
 
     @Test("Re-pin on episode 2 drops the episode-1 entry; one entry remains")
@@ -768,17 +850,17 @@ struct OverrideMapRepinTests {
         // its predecessor, so the map never grows beyond one entry.
         let a = OverrideKey(
             appKitFrontBundle: "com.google.Chrome",
-            axFocusedWindowTitle: "W1",
+            axFocusedWindowTitle: "Show E1",
             nowPlayingTitle: "Show",
         )
         let b = OverrideKey(
             appKitFrontBundle: "com.google.Chrome",
-            axFocusedWindowTitle: "W2",
+            axFocusedWindowTitle: "Show E2",
             nowPlayingTitle: "Show",
         )
         let c = OverrideKey(
             appKitFrontBundle: "com.google.Chrome",
-            axFocusedWindowTitle: "W3",
+            axFocusedWindowTitle: "Show E3",
             nowPlayingTitle: "Show",
         )
         var map: [OverrideKey: Overrule] = [:]
