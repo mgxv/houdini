@@ -208,6 +208,17 @@ struct MenuBarDecisionTests {
         #expect(i.decision == .hide)
     }
 
+    @Test("Gate 7: NP title contains window title → hide (reverse-substring lenient)")
+    func gate7ReverseSubstring() {
+        // Native-player shape: window is the bare track name; NP carries
+        // the longer "track — artist" form. Either-direction substring
+        // match should still hide.
+        var i = Inputs()
+        i.axFocusedWindowTitle = "Bohemian Rhapsody"
+        i.nowPlayingTitle = "Bohemian Rhapsody — Queen"
+        #expect(i.decision == .hide)
+    }
+
     // MARK: - Ordering
 
     @Test("Earlier gate failures take precedence over later ones")
