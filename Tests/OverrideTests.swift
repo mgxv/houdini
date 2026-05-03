@@ -172,13 +172,6 @@ struct OverrideKeyTests {
         #expect(a != b)
     }
 
-    @Test("nil bundle is its own slot, distinct from any non-nil")
-    func nilBundleDistinct() {
-        let nilSlot = OverrideKey(frontBundle: nil, windowTitle: "Doc")
-        let chrome = OverrideKey(frontBundle: "com.google.Chrome", windowTitle: "Doc")
-        #expect(nilSlot != chrome)
-    }
-
     @Test("Same key in a Set/Dict replaces — no contradictory entries")
     func dictReplacesOnDuplicateKey() {
         let key = OverrideKey(frontBundle: "com.google.Chrome", windowTitle: "Track")
@@ -194,13 +187,15 @@ struct OverrideKeyTests {
         var map: [OverrideKey: Overrule] = [:]
         map[OverrideKey(frontBundle: "com.google.Chrome", windowTitle: "Euphoria")] = .forceHide
         map[OverrideKey(frontBundle: "com.apple.Safari", windowTitle: "Wiki")] = .forceShow
-        map[OverrideKey(frontBundle: nil, windowTitle: "Terminal")] = .forceHide
+        map[OverrideKey(frontBundle: "com.apple.Terminal", windowTitle: "tail -f log")] =
+            .forceHide
         #expect(map.count == 3)
         #expect(map[OverrideKey(frontBundle: "com.google.Chrome", windowTitle: "Euphoria")] ==
             .forceHide)
         #expect(map[OverrideKey(frontBundle: "com.apple.Safari", windowTitle: "Wiki")] ==
             .forceShow)
-        #expect(map[OverrideKey(frontBundle: nil, windowTitle: "Terminal")] == .forceHide)
+        #expect(map[OverrideKey(frontBundle: "com.apple.Terminal", windowTitle: "tail -f log")]
+            == .forceHide)
     }
 
     @Test("Normalized title produces the same key across audio-annotation wobble")
@@ -216,15 +211,6 @@ struct OverrideKeyTests {
             windowTitle: normalizeWindowTitle(annotated),
         )
         #expect(bareKey == annotatedKey)
-    }
-
-    // MARK: - String? bundle distinctions
-
-    @Test("Empty bundle string is distinct from nil bundle")
-    func emptyBundleDistinctFromNil() {
-        let emptyBundle = OverrideKey(frontBundle: "", windowTitle: "Doc")
-        let nilBundle = OverrideKey(frontBundle: nil, windowTitle: "Doc")
-        #expect(emptyBundle != nilBundle)
     }
 
     // MARK: - Case + whitespace sensitivity
@@ -268,7 +254,7 @@ struct OverrideKeyTests {
     func insertOrderIndependent() {
         let k1 = OverrideKey(frontBundle: "a", windowTitle: "X")
         let k2 = OverrideKey(frontBundle: "b", windowTitle: "X")
-        let k3 = OverrideKey(frontBundle: nil, windowTitle: "X")
+        let k3 = OverrideKey(frontBundle: "c", windowTitle: "X")
         var forward: [OverrideKey: Overrule] = [:]
         forward[k1] = .forceHide; forward[k2] = .forceShow; forward[k3] = .forceHide
         var reverse: [OverrideKey: Overrule] = [:]
@@ -333,18 +319,6 @@ struct OverrideKeyMatchesByWindowTests {
             nowPlayingTitle: "Show",
         )
         #expect(key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track"))
-    }
-
-    @Test("Both bundles nil → match")
-    func bothBundlesNil() {
-        let key = OverrideKey(frontBundle: nil, windowTitle: "Track")
-        #expect(key.matchesByWindow(frontBundle: nil, windowTitle: "Track"))
-    }
-
-    @Test("Stored nil bundle vs non-nil query → false")
-    func nilKeyBundleMismatch() {
-        let key = OverrideKey(frontBundle: nil, windowTitle: "Track")
-        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track"))
     }
 
     @Test("Whitespace-only difference → false (no implicit normalization on lookup)")
@@ -420,16 +394,6 @@ struct OverrideKeyMatchesByNPTests {
             nowPlayingTitle: "Show",
         )
         #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: "show"))
-    }
-
-    @Test("Both bundles nil → match when NP titles match")
-    func bothBundlesNil() {
-        let key = OverrideKey(
-            frontBundle: nil,
-            windowTitle: "Track",
-            nowPlayingTitle: "Show",
-        )
-        #expect(key.matchesByNowPlaying(frontBundle: nil, nowPlayingTitle: "Show"))
     }
 
     @Test("Whitespace difference → false (no normalization on NP titles)")
@@ -527,10 +491,8 @@ struct OverrideKeyOverlapsTests {
             nowPlayingTitle: "S",
         )
         let withoutNP = OverrideKey(frontBundle: "com.x", windowTitle: "W")
-        let nilBundle = OverrideKey(frontBundle: nil, windowTitle: "W")
         #expect(withNP.overlaps(withNP))
         #expect(withoutNP.overlaps(withoutNP))
-        #expect(nilBundle.overlaps(nilBundle))
     }
 
     @Test("Symmetric: a.overlaps(b) ⇔ b.overlaps(a)")
@@ -555,13 +517,6 @@ struct OverrideKeyOverlapsTests {
         for (a, b) in pairs {
             #expect(a.overlaps(b) == b.overlaps(a))
         }
-    }
-
-    @Test("Both bundles nil — overlap follows the same rules")
-    func bothBundlesNil() {
-        let a = OverrideKey(frontBundle: nil, windowTitle: "W", nowPlayingTitle: "S")
-        let b = OverrideKey(frontBundle: nil, windowTitle: "W", nowPlayingTitle: "Other")
-        #expect(a.overlaps(b)) // same window
     }
 }
 

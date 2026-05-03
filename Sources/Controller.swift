@@ -32,7 +32,7 @@ enum Overrule: String {
 /// signal, since browsers put the page name there. `frontBundle`
 /// guards against same-titled windows in different apps colliding.
 struct OverrideKey: Hashable {
-    let frontBundle: String?
+    let frontBundle: String
     let windowTitle: String
     /// Episode-based players (HBO Max etc.) roll the window title
     /// per episode but keep this stable as the show name —
@@ -40,7 +40,7 @@ struct OverrideKey: Hashable {
     let nowPlayingTitle: String?
 
     init(
-        frontBundle: String?,
+        frontBundle: String,
         windowTitle: String,
         nowPlayingTitle: String? = nil,
     ) {
@@ -52,7 +52,7 @@ struct OverrideKey: Hashable {
 
 extension OverrideKey {
     func matchesByWindow(
-        frontBundle queryBundle: String?,
+        frontBundle queryBundle: String,
         windowTitle queryTitle: String?,
     ) -> Bool {
         guard let q = queryTitle, !q.isEmpty else { return false }
@@ -62,7 +62,7 @@ extension OverrideKey {
     /// nil/empty on either side returns false — otherwise every
     /// no-NP key would match every no-NP query and collide.
     func matchesByNowPlaying(
-        frontBundle queryBundle: String?,
+        frontBundle queryBundle: String,
         nowPlayingTitle queryTitle: String?,
     ) -> Bool {
         guard let stored = nowPlayingTitle, !stored.isEmpty else { return false }
@@ -341,13 +341,14 @@ final class Controller: NSObject {
         evaluate(trigger: .hotkey)
     }
 
-    /// nil when the focused window has no usable AX title — the
-    /// caller falls through to `globalOverrule`.
+    /// nil when the focused window has no usable bundle id or AX
+    /// title — the caller falls through to `globalOverrule`.
     private func overrideKey(
         forBundle bundle: String?,
         windowTitle: String?,
         nowPlayingTitle: String?,
     ) -> OverrideKey? {
+        guard let bundle = Self.nilIfEmpty(bundle) else { return nil }
         guard let normalized = Self.normalizedKeyTitle(windowTitle) else { return nil }
         return OverrideKey(
             frontBundle: bundle,
@@ -358,24 +359,28 @@ final class Controller: NSObject {
 
     /// Window-title match wins (precise tab); NP-title match is the
     /// fallback (HBO-style episode roll). Two passes keep priority
-    /// deterministic regardless of dict iteration order.
+    /// deterministic regardless of dict iteration order. A missing
+    /// bundle id skips the map scan and routes through
+    /// `globalOverrule` — same path as a missing window title.
     private func resolveOverrule(
         frontBundle: String?,
         frontWindowTitle: String?,
         nowPlayingTitle: String?,
     ) -> (Overrule, OverruleSource) {
-        let win = Self.normalizedKeyTitle(frontWindowTitle)
-        let np = Self.nilIfEmpty(nowPlayingTitle)
+        if let bundle = Self.nilIfEmpty(frontBundle) {
+            let win = Self.normalizedKeyTitle(frontWindowTitle)
+            let np = Self.nilIfEmpty(nowPlayingTitle)
 
-        for (key, overrule) in overrideMap
-            where key.matchesByWindow(frontBundle: frontBundle, windowTitle: win)
-        {
-            return (overrule, .sticky)
-        }
-        for (key, overrule) in overrideMap
-            where key.matchesByNowPlaying(frontBundle: frontBundle, nowPlayingTitle: np)
-        {
-            return (overrule, .sticky)
+            for (key, overrule) in overrideMap
+                where key.matchesByWindow(frontBundle: bundle, windowTitle: win)
+            {
+                return (overrule, .sticky)
+            }
+            for (key, overrule) in overrideMap
+                where key.matchesByNowPlaying(frontBundle: bundle, nowPlayingTitle: np)
+            {
+                return (overrule, .sticky)
+            }
         }
         if globalOverrule != .auto {
             return (globalOverrule, .global)
