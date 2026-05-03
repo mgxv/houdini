@@ -142,10 +142,18 @@ struct NormalizeWindowTitleTests {
 
 @Suite("OverrideKey")
 struct OverrideKeyTests {
-    @Test("Equal when both fields match")
+    @Test("Equal when all three fields match")
     func equality() {
-        let a = OverrideKey(frontBundle: "com.google.Chrome", windowTitle: "Track")
-        let b = OverrideKey(frontBundle: "com.google.Chrome", windowTitle: "Track")
+        let a = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        let b = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
         #expect(a == b)
         #expect(a.hashValue == b.hashValue)
     }
@@ -326,6 +334,30 @@ struct OverrideKeyMatchesByWindowTests {
         )
         #expect(key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track"))
     }
+
+    @Test("Both bundles nil → match")
+    func bothBundlesNil() {
+        let key = OverrideKey(frontBundle: nil, windowTitle: "Track")
+        #expect(key.matchesByWindow(frontBundle: nil, windowTitle: "Track"))
+    }
+
+    @Test("Stored nil bundle vs non-nil query → false")
+    func nilKeyBundleMismatch() {
+        let key = OverrideKey(frontBundle: nil, windowTitle: "Track")
+        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track"))
+    }
+
+    @Test("Whitespace-only difference → false (no implicit normalization on lookup)")
+    func whitespaceSensitive() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track")
+        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "Track "))
+    }
+
+    @Test("Case difference → false (case-sensitive)")
+    func caseSensitive() {
+        let key = OverrideKey(frontBundle: "com.x.App", windowTitle: "Track")
+        #expect(!key.matchesByWindow(frontBundle: "com.x.App", windowTitle: "track"))
+    }
 }
 
 @Suite("OverrideKey.matchesByNowPlaying")
@@ -388,6 +420,26 @@ struct OverrideKeyMatchesByNPTests {
             nowPlayingTitle: "Show",
         )
         #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: "show"))
+    }
+
+    @Test("Both bundles nil → match when NP titles match")
+    func bothBundlesNil() {
+        let key = OverrideKey(
+            frontBundle: nil,
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(key.matchesByNowPlaying(frontBundle: nil, nowPlayingTitle: "Show"))
+    }
+
+    @Test("Whitespace difference → false (no normalization on NP titles)")
+    func whitespaceSensitive() {
+        let key = OverrideKey(
+            frontBundle: "com.x.App",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        #expect(!key.matchesByNowPlaying(frontBundle: "com.x.App", nowPlayingTitle: "Show "))
     }
 
     // MARK: - Real-world parity
@@ -465,5 +517,205 @@ struct OverrideKeyOverlapsTests {
         let a = OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: "S1")
         let b = OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: "S2")
         #expect(!a.overlaps(b))
+    }
+
+    @Test("Reflexive: a key always overlaps itself")
+    func reflexive() {
+        let withNP = OverrideKey(
+            frontBundle: "com.x",
+            windowTitle: "W",
+            nowPlayingTitle: "S",
+        )
+        let withoutNP = OverrideKey(frontBundle: "com.x", windowTitle: "W")
+        let nilBundle = OverrideKey(frontBundle: nil, windowTitle: "W")
+        #expect(withNP.overlaps(withNP))
+        #expect(withoutNP.overlaps(withoutNP))
+        #expect(nilBundle.overlaps(nilBundle))
+    }
+
+    @Test("Symmetric: a.overlaps(b) ⇔ b.overlaps(a)")
+    func symmetric() {
+        let pairs: [(OverrideKey, OverrideKey)] = [
+            // window-axis overlap
+            (
+                OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "A"),
+                OverrideKey(frontBundle: "com.x", windowTitle: "W", nowPlayingTitle: "B"),
+            ),
+            // np-axis overlap
+            (
+                OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: "S"),
+                OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: "S"),
+            ),
+            // disjoint
+            (
+                OverrideKey(frontBundle: "com.x", windowTitle: "W1", nowPlayingTitle: "S1"),
+                OverrideKey(frontBundle: "com.x", windowTitle: "W2", nowPlayingTitle: "S2"),
+            ),
+        ]
+        for (a, b) in pairs {
+            #expect(a.overlaps(b) == b.overlaps(a))
+        }
+    }
+
+    @Test("Both bundles nil — overlap follows the same rules")
+    func bothBundlesNil() {
+        let a = OverrideKey(frontBundle: nil, windowTitle: "W", nowPlayingTitle: "S")
+        let b = OverrideKey(frontBundle: nil, windowTitle: "W", nowPlayingTitle: "Other")
+        #expect(a.overlaps(b)) // same window
+    }
+}
+
+// MARK: - Override-map re-pin behavior
+
+/// End-to-end tests over the filter+insert pattern from
+/// `Controller.toggleOverrule`. Doesn't instantiate Controller (it's
+/// `@MainActor` with live watchers); instead pins the algorithmic
+/// contract: re-pinning under an overlapping context replaces, while
+/// disjoint pins coexist.
+@Suite("Override map re-pin behavior")
+struct OverrideMapRepinTests {
+    /// Mirror of the inline pattern in `Controller.toggleOverrule`.
+    private func repin(
+        _ map: inout [OverrideKey: Overrule],
+        _ key: OverrideKey,
+        _ value: Overrule,
+    ) {
+        map = map.filter { !$0.key.overlaps(key) }
+        map[key] = value
+    }
+
+    @Test("HBO: pin on episode 1 → episode-2 lookup hits via NP title")
+    func hboEpisodeMatch() {
+        let ep1 = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Euphoria S01E01 - HBO Max",
+            nowPlayingTitle: "Euphoria",
+        )
+        let map: [OverrideKey: Overrule] = [ep1: .forceHide]
+
+        // Same scan resolveOverrule does on the NP-fallback pass.
+        let hit = map.first { $0.key.matchesByNowPlaying(
+            frontBundle: "com.google.Chrome",
+            nowPlayingTitle: "Euphoria",
+        ) }
+        #expect(hit?.value == .forceHide)
+    }
+
+    @Test("Re-pin on episode 2 drops the episode-1 entry; one entry remains")
+    func hboRepinReplaces() {
+        let ep1 = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Euphoria S01E01 - HBO Max",
+            nowPlayingTitle: "Euphoria",
+        )
+        let ep2 = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Euphoria S01E02 - HBO Max",
+            nowPlayingTitle: "Euphoria",
+        )
+        var map: [OverrideKey: Overrule] = [ep1: .forceHide]
+
+        repin(&map, ep2, .forceHide)
+        #expect(map.count == 1)
+        #expect(map[ep1] == nil)
+        #expect(map[ep2] == .forceHide)
+    }
+
+    @Test("Re-pin on the exact same key flips the value (no duplicates)")
+    func sameKeyReplaces() {
+        let key = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show",
+        )
+        var map: [OverrideKey: Overrule] = [key: .forceHide]
+        repin(&map, key, .forceShow)
+        #expect(map.count == 1)
+        #expect(map[key] == .forceShow)
+    }
+
+    @Test("Same NP title across different bundles → coexist")
+    func differentBundleCoexists() {
+        let chrome = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "W",
+            nowPlayingTitle: "Show",
+        )
+        let safari = OverrideKey(
+            frontBundle: "com.apple.Safari",
+            windowTitle: "W",
+            nowPlayingTitle: "Show",
+        )
+        var map: [OverrideKey: Overrule] = [:]
+        repin(&map, chrome, .forceHide)
+        repin(&map, safari, .forceShow)
+        #expect(map.count == 2)
+        #expect(map[chrome] == .forceHide)
+        #expect(map[safari] == .forceShow)
+    }
+
+    @Test("Wholly distinct pins (different window AND different NP) coexist")
+    func disjointPinsCoexist() {
+        let pin1 = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Window A",
+            nowPlayingTitle: "Show A",
+        )
+        let pin2 = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Window B",
+            nowPlayingTitle: "Show B",
+        )
+        var map: [OverrideKey: Overrule] = [:]
+        repin(&map, pin1, .forceHide)
+        repin(&map, pin2, .forceShow)
+        #expect(map.count == 2)
+        #expect(map[pin1] == .forceHide)
+        #expect(map[pin2] == .forceShow)
+    }
+
+    @Test("Window-only overlap: re-pin on same window with different NP replaces")
+    func windowOnlyOverlap() {
+        let original = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show A",
+        )
+        let repin1 = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "Track",
+            nowPlayingTitle: "Show B",
+        )
+        var map: [OverrideKey: Overrule] = [original: .forceHide]
+        repin(&map, repin1, .forceShow)
+        #expect(map.count == 1)
+        #expect(map[repin1] == .forceShow)
+    }
+
+    @Test("Three overlapping pins fold into one after the third re-pin")
+    func chainedOverlapsFold() {
+        // All three share the same NP title — each new pin overlaps
+        // its predecessor, so the map never grows beyond one entry.
+        let a = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "W1",
+            nowPlayingTitle: "Show",
+        )
+        let b = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "W2",
+            nowPlayingTitle: "Show",
+        )
+        let c = OverrideKey(
+            frontBundle: "com.google.Chrome",
+            windowTitle: "W3",
+            nowPlayingTitle: "Show",
+        )
+        var map: [OverrideKey: Overrule] = [:]
+        repin(&map, a, .forceHide)
+        repin(&map, b, .forceShow)
+        repin(&map, c, .forceHide)
+        #expect(map.count == 1)
+        #expect(map[c] == .forceHide)
     }
 }
