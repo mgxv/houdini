@@ -91,12 +91,15 @@ When any becomes false, the menu bar comes back.
 
                                           │
                                           ▼
-                                  effectiveShouldHide
-                                (overrule: hotkey pins
-                                 force_hide / force_show
-                                 per (bundle, window title);
-                                 sticky across pause, FS hops,
-                                 app switches; auto otherwise)
+                                effectiveShouldHide
+                             (overrule: hotkey pins
+                             force_hide / force_show
+                             per (bundle, window title,
+                             NP title); matches via window
+                             OR NP title — handles per-
+                             episode window-title rolls;
+                             sticky across pause, FS hops,
+                             app switches; auto otherwise)
                                           │
                                           ▼
                   AppleMenuBarVisibleInFullscreen (system pref)
@@ -170,7 +173,7 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 
 ## Manual override
 
-`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden. The override is **sticky to the tab/window** where you set it, keyed on `(bundle id, focused window title)`: pause/resume, AX title wobble, FS↔FS hops, and switching to other apps don't drop it. Switching to a *different* tab/window doesn't apply it (the daemon's auto decision wins there); coming back to the original re-applies it without another press. Press the hotkey again on the same tab to flip the pin to the opposite direction. Overrides are in-memory only and cleared on daemon restart.
+`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden. The override is **sticky to the tab/window** where you set it, keyed on `(bundle id, focused window title, Now Playing title)`: pause/resume, AX title wobble, FS↔FS hops, and switching to other apps don't drop it. Lookup matches the pin via window title *or* Now Playing title under the same bundle, so a player that rolls its window title per episode (HBO Max etc.) keeps the pin across episodes via the show name MediaRemote keeps stable. Switching to a *different* tab/window doesn't apply it (the daemon's auto decision wins there); coming back to the original re-applies it without another press. Re-pinning under the same context (same bundle + matching window or NP title) replaces the prior entry, so no contradictory pins accumulate. Press the hotkey again on the same tab to flip the pin to the opposite direction. Overrides are in-memory only and cleared on daemon restart.
 
 When the focused window has no AX title (Accessibility not granted, or login-window-style edges), the press becomes a one-shot fallback that clears on the next real event — preserving the original UX in that path.
 

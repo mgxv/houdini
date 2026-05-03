@@ -14,19 +14,19 @@ import Foundation
 // MARK: - Public types
 
 /// Snapshot of the active Space's fullscreen state as Dock most
-/// recently reported it. `pid` is the fullscreen app's process
+/// recently reported it. `fsOwnerPID` is the fullscreen app's process
 /// identifier when `isFullScreen == true`, and nil otherwise (Dock's
 /// exit log doesn't carry a PID, just confirmation that we're back on
 /// a non-FS Space).
 struct DockFullScreenState: Equatable {
     let isFullScreen: Bool
-    let pid: FSOwnerPID?
+    let fsOwnerPID: FSOwnerPID?
 
     /// Default until any Dock event arrives. If the user is
     /// *already* in a fullscreen Space when the daemon launches, we
     /// report `isFullScreen=false` until the next Space transition
     /// corrects us — menu bar stays visible until then.
-    static let initial = DockFullScreenState(isFullScreen: false, pid: nil)
+    static let initial = DockFullScreenState(isFullScreen: false, fsOwnerPID: nil)
 }
 
 /// Events from the dock-visibility log channel. `staySpaceChange`
@@ -62,7 +62,7 @@ final class DockSpaceWatcher {
     private var lineBuffer = LineBuffer()
     /// Set by `stop()` so the termination handler can distinguish
     /// graceful shutdown from unexpected exit (fatal).
-    private var stopping = false
+    private var isStopping = false
 
     init(onUpdate: @escaping @MainActor (DockSpaceEvent) -> Void) {
         self.onUpdate = onUpdate
@@ -104,11 +104,11 @@ final class DockSpaceWatcher {
 
         // Unexpected exit is fatal — degraded operation (always show)
         // is worse than a launchd-orchestrated restart. The
-        // `stopping` check distinguishes graceful shutdown.
+        // `isStopping` check distinguishes graceful shutdown.
         process.terminationHandler = { [weak self] proc in
             let status = proc.terminationStatus
             Task { @MainActor in
-                guard let self, !self.stopping else { return }
+                guard let self, !self.isStopping else { return }
                 die("""
                 DockSpaceWatcher: log stream subprocess exited \
                 unexpectedly (status=\(status))
@@ -120,11 +120,11 @@ final class DockSpaceWatcher {
         subprocess = process
     }
 
-    /// Sets the `stopping` flag synchronously before `terminate()`
+    /// Sets the `isStopping` flag synchronously before `terminate()`
     /// so the termination handler observes it and skips the fatal
     /// unexpected-exit path.
     func stop() {
-        stopping = true
+        isStopping = true
         if let subprocess, subprocess.isRunning {
             subprocess.terminate()
         }
@@ -138,7 +138,7 @@ final class DockSpaceWatcher {
             guard let event = Self.parse(text) else { return }
             switch event {
             case let .fullScreenState(state):
-                let pidField = state.pid.map { "\($0.rawValue)" } ?? "null"
+                let pidField = state.fsOwnerPID.map { "\($0.rawValue)" } ?? "null"
                 Log.controller.debug(
                     "→ dock_rx fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
                 )
@@ -176,12 +176,15 @@ final class DockSpaceWatcher {
         // `\b` prevents matching the `pid=` suffix of `spid=…` if
         // Dock ever switches the space-id separator from `:` to `=`.
         // Defensive — today's traces use `(spid: N)`.
-        var pid: FSOwnerPID?
+        var fsOwnerPID: FSOwnerPID?
         if let match = line.range(of: #"\bpid=\d+"#, options: .regularExpression) {
             let digits = line[match].dropFirst("pid=".count)
-            if let raw = pid_t(digits) { pid = FSOwnerPID(raw) }
+            if let raw = pid_t(digits) { fsOwnerPID = FSOwnerPID(raw) }
         }
 
-        return .fullScreenState(DockFullScreenState(isFullScreen: isFullScreen, pid: pid))
+        return .fullScreenState(DockFullScreenState(
+            isFullScreen: isFullScreen,
+            fsOwnerPID: fsOwnerPID,
+        ))
     }
 }

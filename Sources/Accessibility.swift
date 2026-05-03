@@ -170,7 +170,7 @@ func visibleWindowTitle(for pid: pid_t?) -> WindowTitleProbe {
 /// callbacks often hand us the focused UI element rather than the
 /// window itself.
 @MainActor
-func windowTitle(forElement element: AXUIElement) -> String? {
+func axFocusedWindowTitle(forElement element: AXUIElement) -> String? {
     var roleRef: AnyObject?
     let isWindow = AXUIElementCopyAttributeValue(
         element, kAXRoleAttribute as CFString, &roleRef,
@@ -243,7 +243,7 @@ final class AXWatcher {
     /// fallback would never clear on `.window` triggers in that
     /// case. The per-tab `overrideMap` is keyed on the title, so
     /// a tab switch already moves it out of scope by key change.
-    private(set) var focusEpoch: UInt64 = 0
+    private(set) var axFocusEpoch: UInt64 = 0
 
     /// CFEqual baseline for `updateFocusEpoch`. Reset on
     /// `detach()` so the next attach's first focus event always
@@ -338,7 +338,7 @@ final class AXWatcher {
 
     // MARK: Internal helpers
 
-    /// Maintains `focusEpoch` and `lastFocusedElement`. Bumps
+    /// Maintains `axFocusEpoch` and `lastFocusedElement`. Bumps
     /// only on real focus shifts so the Controller can distinguish
     /// "user moved focus" (tab switch, click into a different
     /// pane) from constant AX chatter during playback.
@@ -354,7 +354,7 @@ final class AXWatcher {
         // notification without an actual shift) — skip.
         if let last = lastFocusedElement, CFEqual(last, element) { return }
         lastFocusedElement = element
-        focusEpoch &+= 1
+        axFocusEpoch &+= 1
     }
 
     private func refreshTitleSubscription(on window: AXUIElement) {

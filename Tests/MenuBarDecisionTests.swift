@@ -9,11 +9,11 @@ import Testing
 @Suite("menuBarDecision gates")
 struct MenuBarDecisionTests {
     private struct Inputs {
-        var dockFs = DockFullScreenState(isFullScreen: true, pid: FSOwnerPID(100))
+        var dockFs = DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         var isPlaying = true
-        var frontPID: FrontmostPID? = .init(100)
-        var frontBundle: String? = "com.example.App"
-        var frontWindowTitle: String? = "Track X — App"
+        var appKitFrontPID: FrontmostPID? = .init(100)
+        var appKitFrontBundle: String? = "com.example.App"
+        var axFocusedWindowTitle: String? = "Track X — App"
         var nowPlayingPID: NowPlayingPID? = .init(100)
         var nowPlayingParentBundle: String? = "com.example.App"
         var nowPlayingTitle: String? = "Track X"
@@ -22,9 +22,9 @@ struct MenuBarDecisionTests {
             menuBarDecision(
                 dockFs: dockFs,
                 isPlaying: isPlaying,
-                frontPID: frontPID,
-                frontBundle: frontBundle,
-                frontWindowTitle: frontWindowTitle,
+                appKitFrontPID: appKitFrontPID,
+                appKitFrontBundle: appKitFrontBundle,
+                axFocusedWindowTitle: axFocusedWindowTitle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
                 nowPlayingTitle: nowPlayingTitle,
@@ -42,16 +42,16 @@ struct MenuBarDecisionTests {
     @Test("Gate 1: not fullscreen → show(not_fullscreen)")
     func gate1NotFullScreen() {
         var i = Inputs()
-        i.dockFs = .init(isFullScreen: false, pid: nil)
+        i.dockFs = .init(isFullScreen: false, fsOwnerPID: nil)
         #expect(i.decision == .showNotFullScreen)
     }
 
     @Test("Gate 1 short-circuits earlier failures")
     func gate1TakesPrecedence() {
         var i = Inputs()
-        i.dockFs = .init(isFullScreen: false, pid: nil)
+        i.dockFs = .init(isFullScreen: false, fsOwnerPID: nil)
         i.isPlaying = false
-        i.frontPID = nil
+        i.appKitFrontPID = nil
         #expect(i.decision == .showNotFullScreen)
     }
 
@@ -66,10 +66,10 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gates 3 & 4: presence
 
-    @Test("Gate 3: nil frontPID → show(no_front_pid)")
+    @Test("Gate 3: nil appKitFrontPID → show(no_front_pid)")
     func gate3NoFrontPID() {
         var i = Inputs()
-        i.frontPID = nil
+        i.appKitFrontPID = nil
         #expect(i.decision == .showNoFrontPid)
     }
 
@@ -82,20 +82,20 @@ struct MenuBarDecisionTests {
 
     // MARK: - Gate 5: FS-owner
 
-    @Test("Gate 5: nil dockFs.pid → show(front_not_fs_owner)")
+    @Test("Gate 5: nil dockFs.fsOwnerPID → show(front_not_fs_owner)")
     func gate5NilDockFsPID() {
         var i = Inputs()
-        i.dockFs = .init(isFullScreen: true, pid: nil)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: nil)
         #expect(i.decision == .showFrontNotFsOwner)
     }
 
     @Test("Gate 5: front PID doesn't resolve to FS-owner → show(front_not_fs_owner)")
     func gate5FrontNotFsOwner() {
         var i = Inputs()
-        i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(200))
+        i.appKitFrontPID = .init(100)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(200))
         // Distinct bundles too, so isSameApp's fallback paths can't accidentally match.
-        i.frontBundle = "com.front.App"
+        i.appKitFrontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
         #expect(i.decision == .showFrontNotFsOwner)
     }
@@ -103,8 +103,8 @@ struct MenuBarDecisionTests {
     @Test("Gate 5: identity match passes")
     func gate5IdentityPasses() {
         var i = Inputs()
-        i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.appKitFrontPID = .init(100)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         #expect(i.decision == .hide)
     }
 
@@ -113,10 +113,10 @@ struct MenuBarDecisionTests {
     @Test("Gate 6: process AND bundle mismatch → show(app_mismatch)")
     func gate6AppMismatch() {
         var i = Inputs()
-        i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.appKitFrontPID = .init(100)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
-        i.frontBundle = "com.front.App"
+        i.appKitFrontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
         #expect(i.decision == .showAppMismatch)
     }
@@ -124,10 +124,10 @@ struct MenuBarDecisionTests {
     @Test("Gate 6: bundle match passes when process mismatches")
     func gate6BundleMatch() {
         var i = Inputs()
-        i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.appKitFrontPID = .init(100)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
-        i.frontBundle = "com.same.App"
+        i.appKitFrontBundle = "com.same.App"
         i.nowPlayingParentBundle = "com.same.App"
         #expect(i.decision == .hide)
     }
@@ -135,10 +135,10 @@ struct MenuBarDecisionTests {
     @Test("Gate 6: process match passes when bundle mismatches")
     func gate6ProcessMatch() {
         var i = Inputs()
-        i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.appKitFrontPID = .init(100)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(100)
-        i.frontBundle = "com.front.App"
+        i.appKitFrontBundle = "com.front.App"
         i.nowPlayingParentBundle = "com.np.App"
         #expect(i.decision == .hide)
     }
@@ -146,10 +146,10 @@ struct MenuBarDecisionTests {
     @Test("Gate 6: empty parent bundle disables the bundle path")
     func gate6EmptyParentBundleNoBundleMatch() {
         var i = Inputs()
-        i.frontPID = .init(100)
-        i.dockFs = .init(isFullScreen: true, pid: FSOwnerPID(100))
+        i.appKitFrontPID = .init(100)
+        i.dockFs = .init(isFullScreen: true, fsOwnerPID: FSOwnerPID(100))
         i.nowPlayingPID = .init(200)
-        i.frontBundle = ""
+        i.appKitFrontBundle = ""
         i.nowPlayingParentBundle = ""
         #expect(i.decision == .showAppMismatch)
     }
@@ -159,7 +159,7 @@ struct MenuBarDecisionTests {
     @Test("Gate 7: title contains NP title → hide")
     func gate7TitleContains() {
         var i = Inputs()
-        i.frontWindowTitle = "Track X — YouTube — Google Chrome"
+        i.axFocusedWindowTitle = "Track X — YouTube — Google Chrome"
         i.nowPlayingTitle = "Track X"
         #expect(i.decision == .hide)
     }
@@ -167,7 +167,7 @@ struct MenuBarDecisionTests {
     @Test("Gate 7: title doesn't contain NP title → show(window_mismatch)")
     func gate7TitleMismatch() {
         var i = Inputs()
-        i.frontWindowTitle = "Settings — Google Chrome"
+        i.axFocusedWindowTitle = "Settings — Google Chrome"
         i.nowPlayingTitle = "Track X"
         #expect(i.decision == .showWindowMismatch)
     }
@@ -175,7 +175,7 @@ struct MenuBarDecisionTests {
     @Test("Gate 7: case-sensitive (intentional)")
     func gate7CaseSensitive() {
         var i = Inputs()
-        i.frontWindowTitle = "TRACK X — App"
+        i.axFocusedWindowTitle = "TRACK X — App"
         i.nowPlayingTitle = "Track X"
         #expect(i.decision == .showWindowMismatch)
     }
@@ -183,14 +183,14 @@ struct MenuBarDecisionTests {
     @Test("Gate 7: nil window title is lenient → hide")
     func gate7NilWindowTitleLenient() {
         var i = Inputs()
-        i.frontWindowTitle = nil
+        i.axFocusedWindowTitle = nil
         #expect(i.decision == .hide)
     }
 
     @Test("Gate 7: empty window title (probe-confirmed) → show(window_mismatch)")
     func gate7EmptyWindowTitleStrict() {
         var i = Inputs()
-        i.frontWindowTitle = ""
+        i.axFocusedWindowTitle = ""
         #expect(i.decision == .showWindowMismatch)
     }
 
@@ -214,7 +214,7 @@ struct MenuBarDecisionTests {
     func gateOrdering() {
         var i = Inputs()
         i.isPlaying = false
-        i.frontPID = nil
+        i.appKitFrontPID = nil
         // Both gate 2 and gate 3 would fail; gate 2 reports first.
         #expect(i.decision == .showNotPlaying)
     }
