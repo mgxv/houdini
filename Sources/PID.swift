@@ -5,6 +5,8 @@
 
 import Foundation
 
+// MARK: - Private helpers (responsibility-PID resolution)
+
 /// macOS tracks, for every process, the user-facing app it acts on
 /// behalf of (the "responsible process") — Safari's WebKit GPU
 /// helper resolves to Safari. Same mechanism TCC uses to attribute
@@ -12,32 +14,6 @@ import Foundation
 /// libsystem_coreservices since 10.12.
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
 private func responsibleProcess(for pid: pid_t) -> pid_t
-
-/// PID of the frontmost (focused) application.
-struct FrontmostPID: Hashable {
-    let rawValue: pid_t
-    init(_ rawValue: pid_t) {
-        self.rawValue = rawValue
-    }
-}
-
-/// PID of the application currently owning the system Now Playing
-/// widget (i.e. the media source).
-struct NowPlayingPID: Hashable {
-    let rawValue: pid_t
-    init(_ rawValue: pid_t) {
-        self.rawValue = rawValue
-    }
-}
-
-/// PID of the application that owns the active fullscreen Space, as
-/// reported by Dock's `dock-visibility` log channel.
-struct FSOwnerPID: Hashable {
-    let rawValue: pid_t
-    init(_ rawValue: pid_t) {
-        self.rawValue = rawValue
-    }
-}
 
 /// True if `a` and `b` resolve to the same user-facing app via
 /// `responsibility_get_pid_responsible_for_pid`. The syscall returns
@@ -52,6 +28,22 @@ private func sameResponsibleApp(_ a: pid_t, _ b: pid_t) -> Bool {
     if bResp > 0, bResp == a { return true }
     if aResp > 0, bResp > 0, aResp == bResp { return true }
     return false
+}
+
+private func responsiblePIDOrNil(for pid: pid_t) -> pid_t? {
+    let resolved = responsibleProcess(for: pid)
+    guard resolved > 0, resolved != pid else { return nil }
+    return resolved
+}
+
+// MARK: - FrontmostPID
+
+/// PID of the frontmost (focused) application.
+struct FrontmostPID: Hashable {
+    let rawValue: pid_t
+    init(_ rawValue: pid_t) {
+        self.rawValue = rawValue
+    }
 }
 
 extension FrontmostPID {
@@ -77,21 +69,7 @@ extension FrontmostPID {
     func isSameApp(asFSOwnerPID fsOwnerPID: FSOwnerPID) -> Bool {
         sameResponsibleApp(rawValue, fsOwnerPID.rawValue)
     }
-}
 
-private func responsiblePIDOrNil(for pid: pid_t) -> pid_t? {
-    let resolved = responsibleProcess(for: pid)
-    guard resolved > 0, resolved != pid else { return nil }
-    return resolved
-}
-
-extension FrontmostPID {
-    var responsiblePID: pid_t? {
-        responsiblePIDOrNil(for: rawValue)
-    }
-}
-
-extension NowPlayingPID {
     var responsiblePID: pid_t? {
         responsiblePIDOrNil(for: rawValue)
     }
@@ -100,6 +78,23 @@ extension NowPlayingPID {
 extension FrontmostPID: CustomStringConvertible {
     var description: String {
         String(rawValue)
+    }
+}
+
+// MARK: - NowPlayingPID
+
+/// PID of the application currently owning the system Now Playing
+/// widget (i.e. the media source).
+struct NowPlayingPID: Hashable {
+    let rawValue: pid_t
+    init(_ rawValue: pid_t) {
+        self.rawValue = rawValue
+    }
+}
+
+extension NowPlayingPID {
+    var responsiblePID: pid_t? {
+        responsiblePIDOrNil(for: rawValue)
     }
 }
 
@@ -116,5 +111,16 @@ extension NowPlayingPID: Decodable {
         let container = try decoder.singleValueContainer()
         let raw = try container.decode(Int.self)
         self.init(pid_t(raw))
+    }
+}
+
+// MARK: - FSOwnerPID
+
+/// PID of the application that owns the active fullscreen Space, as
+/// reported by Dock's `dock-visibility` log channel.
+struct FSOwnerPID: Hashable {
+    let rawValue: pid_t
+    init(_ rawValue: pid_t) {
+        self.rawValue = rawValue
     }
 }

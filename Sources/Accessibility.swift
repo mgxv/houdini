@@ -4,6 +4,12 @@
 import ApplicationServices
 import Foundation
 
+// MARK: - AX trust + permission warnings
+
+func isAccessibilityTrusted() -> Bool {
+    AXIsProcessTrusted()
+}
+
 /// Short action item emitted to the unified log when AX is missing
 /// or revoked. The verbose first-time setup explanation lives in the
 /// brew caveats (`Formula/houdini.rb`).
@@ -12,10 +18,6 @@ Accessibility permission required for window-level same-app refinement.
 Grant via: System Settings → Privacy & Security → Accessibility
 Then run: brew services restart houdini
 """
-
-func isAccessibilityTrusted() -> Bool {
-    AXIsProcessTrusted()
-}
 
 @MainActor private var reportedAXErrors: Set<AXError> = []
 
@@ -58,6 +60,8 @@ private func describeAXError(_ error: AXError) -> String {
     }
 }
 
+// MARK: - AX SPI
+
 /// Private HIServices symbol that bridges an `AXUIElement` window
 /// to its `CGWindowID`. Lets us correlate AX windows with
 /// `CGWindowListCopyWindowInfo` entries (which only know CGIDs) so
@@ -67,6 +71,8 @@ private func _AXUIElementGetWindow(
     _ element: AXUIElement,
     _ windowID: UnsafeMutablePointer<CGWindowID>,
 ) -> AXError
+
+// MARK: - Window title probing
 
 /// Why a `visibleWindowTitle` probe ended up with the title it did.
 /// The decision treats every non-`ok` case as nil (lenient hide);
@@ -157,24 +163,6 @@ func visibleWindowTitle(for pid: pid_t?) -> WindowTitleProbe {
     return WindowTitleProbe(title: nil, status: .empty)
 }
 
-/// Strips browser-injected annotations that wobble while the
-/// underlying tab is unchanged — Chrome's ` - Audio playing` /
-/// ` - Audio muted` suffix and `(N) ` notification-count prefix.
-/// Used as the keying basis for `Controller.overrideMap` so the
-/// wobble doesn't drop a sticky override.
-func normalizeWindowTitle(_ title: String) -> String {
-    var t = title
-    for suffix in [" - Audio playing", " - Audio muted"] {
-        if let r = t.range(of: suffix) {
-            t.removeSubrange(r)
-        }
-    }
-    if let m = t.range(of: #"^\(\d+\)\s+"#, options: .regularExpression) {
-        t.removeSubrange(m)
-    }
-    return t.trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
 /// Walks from any AX element up to its enclosing window and returns
 /// the window's AX title. If `element` is itself a window
 /// (`kAXWindowRole`), reads its title directly. Used to surface the
@@ -206,6 +194,28 @@ func windowTitle(forElement element: AXUIElement) -> String? {
     return (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+// MARK: - Title normalization
+
+/// Strips browser-injected annotations that wobble while the
+/// underlying tab is unchanged — Chrome's ` - Audio playing` /
+/// ` - Audio muted` suffix and `(N) ` notification-count prefix.
+/// Used as the keying basis for `Controller.overrideMap` so the
+/// wobble doesn't drop a sticky override.
+func normalizeWindowTitle(_ title: String) -> String {
+    var t = title
+    for suffix in [" - Audio playing", " - Audio muted"] {
+        if let r = t.range(of: suffix) {
+            t.removeSubrange(r)
+        }
+    }
+    if let m = t.range(of: #"^\(\d+\)\s+"#, options: .regularExpression) {
+        t.removeSubrange(m)
+    }
+    return t.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - AXWatcher
+
 /// Subscribes to focus and title changes for a target app via AX.
 /// Fires `onChange(notificationName, element)` on the main actor for
 /// each `kAXFocusedWindowChanged` / `kAXFocusedUIElementChanged` /
@@ -219,6 +229,8 @@ func windowTitle(forElement element: AXUIElement) -> String? {
 /// `attach()` and rely on the watcher being a no-op if AX is off.
 @MainActor
 final class AXWatcher {
+    // MARK: State
+
     private var observer: AXObserver?
     private var attachedPID: pid_t = 0
     private var watchedWindow: AXUIElement?
@@ -241,6 +253,8 @@ final class AXWatcher {
     init(onChange: @escaping @MainActor (String, AXUIElement) -> Void) {
         self.onChange = onChange
     }
+
+    // MARK: Attach / detach
 
     func attach(pid: pid_t?) {
         guard let pid, pid > 0 else { detach(); return }
@@ -321,6 +335,8 @@ final class AXWatcher {
         watchedWindow = nil
         lastFocusedElement = nil
     }
+
+    // MARK: Internal helpers
 
     /// Maintains `focusEpoch` and `lastFocusedElement`. Bumps
     /// only on real focus shifts so the Controller can distinguish

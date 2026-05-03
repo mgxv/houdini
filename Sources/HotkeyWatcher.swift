@@ -8,6 +8,8 @@
 import Carbon.HIToolbox
 import Cocoa
 
+// MARK: - HotkeyWatcher
+
 @MainActor
 final class HotkeyWatcher {
     struct Chord {
@@ -22,16 +24,18 @@ final class HotkeyWatcher {
         modifiers: UInt32(controlKey | optionKey | cmdKey),
     )
 
+    private static let signature: OSType = 0x686F_7564 // 'houd'
+    private static let id: UInt32 = 1
+
     private let onPress: @MainActor () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
-    private static let signature: OSType = 0x686F_7564 // 'houd'
-    private static let id: UInt32 = 1
-
     init(onPress: @escaping @MainActor () -> Void) {
         self.onPress = onPress
     }
+
+    // MARK: Lifecycle
 
     /// Returns false if the chord is already taken; non-fatal — the
     /// daemon's automatic control still works without it.
@@ -93,15 +97,6 @@ final class HotkeyWatcher {
         return true
     }
 
-    private static func describe(_ status: OSStatus) -> String {
-        switch Int(status) {
-        case eventHotKeyExistsErr: "chord already registered by another app (status \(status))"
-        case eventHotKeyInvalidErr: "invalid chord (status \(status))"
-        case paramErr: "invalid parameter (status \(status))"
-        default: "status \(status)"
-        }
-    }
-
     func stop() {
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
@@ -112,8 +107,25 @@ final class HotkeyWatcher {
             handlerRef = nil
         }
     }
+
+    // MARK: Helpers
+
+    private static func describe(_ status: OSStatus) -> String {
+        switch Int(status) {
+        case eventHotKeyExistsErr: "chord already registered by another app (status \(status))"
+        case eventHotKeyInvalidErr: "invalid chord (status \(status))"
+        case paramErr: "invalid parameter (status \(status))"
+        default: "status \(status)"
+        }
+    }
 }
 
+// MARK: - HotkeyState (on-disk handoff for `houdini status`)
+
+/// Persists the hotkey-registration result to a small file under
+/// Application Support so the `status` subcommand (running in a
+/// separate process) can report it. Cleared on graceful daemon
+/// shutdown so a stale value doesn't outlive the daemon.
 enum HotkeyState {
     private static func url() -> URL? {
         guard let appSupport = try? FileManager.default.url(

@@ -232,7 +232,7 @@ if [ "$PREFIX" != "$PROJECT_ROOT" ]; then
     BIN_DIR="$PREFIX/bin"
     LIBEXEC_DIR="$PREFIX/libexec/houdini"
     mkdir -p "$BIN_DIR" "$LIBEXEC_DIR"
-    rm -rf "$LIBEXEC_DIR/$FRAMEWORK" "$LIBEXEC_DIR/vendor" "$BIN_DIR/$BINARY"
+    rm -rf "${LIBEXEC_DIR:?}/$FRAMEWORK" "${LIBEXEC_DIR:?}/vendor" "${BIN_DIR:?}/$BINARY"
     cp -R "$FRAMEWORK" "$LIBEXEC_DIR/"   # cp -R preserves Versions/Current symlinks
     cp -R vendor "$LIBEXEC_DIR/"
     mv "$BINARY" "$BIN_DIR/"

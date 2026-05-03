@@ -11,6 +11,8 @@
 
 import Foundation
 
+// MARK: - Public types
+
 /// Snapshot of the active Space's fullscreen state as Dock most
 /// recently reported it. `pid` is the fullscreen app's process
 /// identifier when `isFullScreen == true`, and nil otherwise (Dock's
@@ -35,8 +37,12 @@ enum DockSpaceEvent: Equatable {
     case staySpaceChange
 }
 
+// MARK: - DockSpaceWatcher
+
 @MainActor
 final class DockSpaceWatcher {
+    // MARK: Configuration
+
     /// Filters `dock-visibility` to `Space Forces Hidden:` (engage/exit
     /// transitions; carries pid + fullscreen flag) and `Skipping no-op
     /// state update` (Dock's wake-up on silent FS↔FS Space switches).
@@ -49,6 +55,8 @@ final class DockSpaceWatcher {
 
     static let statusPgrepPattern = #"log stream.*dock-visibility"#
 
+    // MARK: State
+
     private let onUpdate: @MainActor (DockSpaceEvent) -> Void
     private var subprocess: Process?
     private var lineBuffer = LineBuffer()
@@ -59,6 +67,8 @@ final class DockSpaceWatcher {
     init(onUpdate: @escaping @MainActor (DockSpaceEvent) -> Void) {
         self.onUpdate = onUpdate
     }
+
+    // MARK: Lifecycle
 
     /// Idempotent. Throws on spawn failure — the Dock channel is
     /// load-bearing, so the caller is expected to `die`.
@@ -119,6 +129,8 @@ final class DockSpaceWatcher {
             subprocess.terminate()
         }
     }
+
+    // MARK: Parsing
 
     private func ingest(_ chunk: Data) {
         lineBuffer.ingest(chunk) { line in

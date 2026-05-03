@@ -36,6 +36,28 @@ jobs:
           bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint -color
 
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run ShellCheck on scripts/
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: warning
+
+  links:
+    name: Markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run lychee on README.md
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --no-progress --max-concurrency 4 README.md
+          fail: true
+
   formula:
     name: Formula audit
     runs-on: macos-15
@@ -78,6 +100,18 @@ jobs:
         run: swift --version
       - name: swift test
         run: swift test -Xswiftc -swift-version -Xswiftc 6 -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+
+  periphery:
+    name: Periphery
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show toolchain
+        run: swift --version
+      - name: Install Periphery
+        run: brew install peripheryapp/periphery/periphery
+      - name: Periphery scan
+        run: periphery scan
 
   sanitize:
     name: ${{ matrix.name }}
