@@ -125,10 +125,18 @@ final class Controller: NSObject {
         let appKitFrontPID: FrontmostPID?
         let appKitFrontName: String
         let appKitFrontBundle: String?
+        /// Raw AX probe result — always logged as `win=`.
         let axFocusedWindowTitle: String?
         /// Diagnostic only — splits a nil title into skipped / denied /
         /// empty / ok in the log so it's debuggable beyond just "nil."
         let axFocusedWindowProbeStatus: WindowTitleProbeStatus
+        /// `dockFs.dockWindowTitle` mirrored on the snapshot for log
+        /// fidelity (`dockWin=`).
+        let dockWindowTitle: String?
+        /// What gate 7 actually sees. Equals `axFocusedWindowTitle`
+        /// except on `.dockFs` triggers with a non-empty
+        /// `dockWindowTitle`, where Dock's value takes priority.
+        let effectiveWindowTitle: String?
         let dockFs: DockFullScreenState
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
@@ -153,7 +161,7 @@ final class Controller: NSObject {
                 isPlaying: isPlaying,
                 appKitFrontPID: appKitFrontPID,
                 appKitFrontBundle: appKitFrontBundle,
-                axFocusedWindowTitle: axFocusedWindowTitle,
+                axFocusedWindowTitle: effectiveWindowTitle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
                 nowPlayingTitle: nowPlayingTitle,
@@ -329,7 +337,13 @@ final class Controller: NSObject {
         guard dockFs.isFullScreen,
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return }
-        dockFs = DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(pid))
+        // Preserve `dockWindowTitle` across stays — it's only consumed
+        // on `.dockFs`, and dropping it churns `signalsEqual`.
+        dockFs = DockFullScreenState(
+            isFullScreen: true,
+            fsOwnerPID: FSOwnerPID(pid),
+            dockWindowTitle: dockFs.dockWindowTitle,
+        )
         evaluate(trigger: .dockStay)
     }
 
@@ -341,7 +355,7 @@ final class Controller: NSObject {
     /// drops fuzzy-overlapping entries first so the map never
     /// holds contradictory pins for the same logical surface.
     private func toggleOverrule() {
-        let snap = takeSnapshot()
+        let snap = takeSnapshot(trigger: .hotkey)
         let next: Overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
 
         if let key = overrideKey(
@@ -430,7 +444,7 @@ final class Controller: NSObject {
     /// `trigger` is preserved through to the log line so a
     /// surprising decision can be traced back to its input.
     private func evaluate(trigger: EvalTrigger) {
-        var snap = takeSnapshot()
+        var snap = takeSnapshot(trigger: trigger)
 
         // AX fires on every focus move; the focused window's title
         // often reads nil for ~50–500ms during normal interaction.
@@ -488,7 +502,9 @@ final class Controller: NSObject {
     /// switches) and the resolved overrule for this snapshot's
     /// context. Pure function of `Controller`'s cached state plus
     /// a single fresh AX/CG probe — never mutates anything.
-    private func takeSnapshot() -> Snapshot {
+    ///
+    /// `trigger` is consumed only by the Dock-priority rule below.
+    private func takeSnapshot(trigger: EvalTrigger) -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let appKitFrontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let appKitFrontName = frontApp?.localizedName ?? "(unknown)"
@@ -504,6 +520,26 @@ final class Controller: NSObject {
             : .skipped
         let axFocusedWindowTitle: String? = probe.status == .empty ? "" : probe.title
 
+        // On `.dockFs`, prioritize Dock's tile-name over AX whenever
+        // it's non-empty: Dock captures the title atomically with its
+        // FS-decision, so it isn't subject to the AX title-lag race.
+        // `.denied` / `.ax_failed` are excluded — those keep the
+        // documented lenient-hide path. Non-`.dockFs` triggers keep
+        // the AX path unchanged.
+        let dockWindowTitle = dockFs.dockWindowTitle
+        let effectiveWindowTitle: String? = {
+            if trigger == .dockFs,
+               probe.status != .denied,
+               probe.status != .axFailed,
+               let dt = dockWindowTitle, !dt.isEmpty
+            {
+                return dt
+            }
+            return axFocusedWindowTitle
+        }()
+
+        // Override key uses the raw AX title — the dock cache is a
+        // transient-state escape hatch, not a window identity.
         let (resolvedOverrule, overruleSource) = resolveOverrule(
             appKitFrontBundle: appKitFrontBundle,
             axFocusedWindowTitle: axFocusedWindowTitle,
@@ -516,6 +552,8 @@ final class Controller: NSObject {
             appKitFrontBundle: appKitFrontBundle,
             axFocusedWindowTitle: axFocusedWindowTitle,
             axFocusedWindowProbeStatus: probe.status,
+            dockWindowTitle: dockWindowTitle,
+            effectiveWindowTitle: effectiveWindowTitle,
             dockFs: dockFs,
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
@@ -607,7 +645,8 @@ final class Controller: NSObject {
         let fsPid = formatNullable(snap.dockFs.fsOwnerPID?.rawValue)
         let win = formatNullableString(snap.axFocusedWindowTitle)
         let probe = snap.axFocusedWindowProbeStatus.rawValue
-        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win),probe=\(probe)]"
+        let dockWin = formatNullableString(snap.dockWindowTitle)
+        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win),probe=\(probe),dockWin=\(dockWin)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
