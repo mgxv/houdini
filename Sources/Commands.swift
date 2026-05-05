@@ -99,13 +99,13 @@ func runStatus() -> Never {
     let adapterAlive = subprocessAlive(matching: AdapterClient.statusPgrepPattern)
     let dockLogAlive = subprocessAlive(matching: DockSpaceWatcher.statusPgrepPattern)
     let hotkeyState = daemonRunning ? (HotkeyState.read() ?? "unknown") : "n/a"
-    let axTrusted = isAccessibilityTrusted()
+    let axState = daemonRunning ? (AccessibilityState.read() ?? "unknown") : "n/a"
     print("version:        \(version)")
     print("daemon:         \(daemonRunning ? "running" : "not running")")
     print("adapter:        \(adapterAlive ? "running" : "not running")")
     print("dock log:       \(dockLogAlive ? "running" : "not running")")
     print("hotkey:         \(hotkeyState)")
-    print("accessibility:  \(axTrusted ? "granted" : "not granted")")
+    print("accessibility:  \(axState)")
     let healthy = daemonRunning && adapterAlive && dockLogAlive
     exit(healthy ? 0 : 1)
 }

@@ -285,6 +285,7 @@ final class Controller: NSObject {
         )
         try dockSpaceWatcher.start()
         axWatcher.attach(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        AccessibilityState.write(isAccessibilityTrusted() ? "granted" : "denied")
         HotkeyState.write(hotkeyWatcher.start() ? "registered" : "failed")
         evaluate(trigger: .start)
     }
@@ -296,6 +297,7 @@ final class Controller: NSObject {
         axWatcher.detach()
         hotkeyWatcher.stop()
         HotkeyState.clear()
+        AccessibilityState.clear()
     }
 
     // MARK: - Input handlers
