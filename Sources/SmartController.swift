@@ -236,6 +236,11 @@ final class SmartController: NSObject {
     /// without AX permission.
     private var globalOverrule: Overrule = .auto
 
+    /// AX focused-element → window title. Reaches titles
+    /// `visibleWindowTitle` can't (Safari FS YouTube). Gate-7
+    /// fallback on `probe.status == .empty`. Reset per-app.
+    private var lastAXTitle: String?
+
     private var lastSnapshot: Snapshot?
 
     // MARK: - Watchers
@@ -257,9 +262,15 @@ final class SmartController: NSObject {
     /// against a non-visible window in Chrome).
     private lazy var axWatcher = AXWatcher { [weak self] name, element in
         guard let self else { return }
+        // Empty/nil results don't clobber — focused-element
+        // traversal sometimes returns nil mid-flux on a titled window.
+        let title = axFocusedWindowTitle(forElement: element)
         Log.controller.debug(
-            "→ \(Self.formatAXEvent(name: name, element: element), privacy: .public)",
+            "→ \(Self.formatAXEvent(name: name, title: title), privacy: .public)",
         )
+        if let title, !title.isEmpty {
+            lastAXTitle = title
+        }
         evaluate(trigger: .window)
     }
 
@@ -305,6 +316,7 @@ final class SmartController: NSObject {
     @objc private func onFrontAppChange(_: Notification) {
         let app = NSWorkspace.shared.frontmostApplication
         Log.controller.debug("→ \(Self.formatFrontChange(app), privacy: .public)")
+        lastAXTitle = nil
         axWatcher.attach(pid: app?.processIdentifier)
         // front_app fires ~30–60ms before dock_stay on FS↔FS hops.
         // Refresh fsOwnerPID so gate 5 doesn't trip on the prior
@@ -350,6 +362,7 @@ final class SmartController: NSObject {
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return }
         refreshFSOwner(pid: pid)
+        lastAXTitle = nil
         evaluate(trigger: .dockStay)
     }
 
@@ -538,18 +551,25 @@ final class SmartController: NSObject {
             : .skipped
         let axFocusedWindowTitle: String? = probe.status == .empty ? "" : probe.title
 
-        // On Dock-driven triggers, prioritize Dock's tile-name over
-        // AX — Dock captures the title atomically with the FS state,
-        // and AX often races empty mid-Space-hop. `.denied` /
-        // `.ax_failed` keep the documented lenient-hide path.
+        // Two fallbacks on top of the raw probe:
+        //   1. Cached AX-notification title on probe-empty — beats
+        //      Dock because Safari's tile name is generic (`Safari`).
+        //   2. Dock tile name on dock-driven triggers — atomic
+        //      FS-state capture, used when AX races empty mid-hop.
+        //      Skipped on denied / failed (lenient-hide preserved).
         let dockWindowTitle = dockFs.dockWindowTitle
         let effectiveWindowTitle: String? = {
+            if probe.status == .empty,
+               let axTitle = lastAXTitle, !axTitle.isEmpty
+            {
+                return axTitle
+            }
             if trigger == .dockFs || trigger == .dockStay,
                probe.status != .denied,
                probe.status != .axFailed,
-               let dt = dockWindowTitle, !dt.isEmpty
+               let dwTitle = dockWindowTitle, !dwTitle.isEmpty
             {
-                return dt
+                return dwTitle
             }
             return axFocusedWindowTitle
         }()
@@ -688,12 +708,11 @@ final class SmartController: NSObject {
     /// One line per AX notification, with the focused element's
     /// containing window title surfaced — lets you correlate a
     /// hide/show decision to the AX event that triggered it.
-    private static func formatAXEvent(name: String, element: AXUIElement) -> String {
+    private static func formatAXEvent(name: String, title: String?) -> String {
         let app = NSWorkspace.shared.frontmostApplication
         let pid = formatNullable(app?.processIdentifier)
         let appName = quotedNullable(app?.localizedName)
-        let title = formatNullableString(axFocusedWindowTitle(forElement: element))
-        return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
+        return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(formatNullableString(title))"
     }
 
     // MARK: - Log formatting — string utilities
