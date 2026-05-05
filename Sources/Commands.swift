@@ -21,13 +21,30 @@ func runForeground() {
         reason: "houdini daemon",
     )
 
-    let artifacts = locateArtifacts()
     acquireInstanceLock()
 
     let menuBar = MenuBarToggler()
     menuBar.resetToVisible()
 
-    let controller = Controller(menuBar: menuBar)
+    let mode = ModeState.read()
+    Log.general
+        .notice(
+            "houdini \(version, privacy: .public) running (mode=\(mode.rawValue, privacy: .public))",
+        )
+    print("houdini \(version) running (mode=\(mode.rawValue)). Press Ctrl-C to quit.")
+
+    switch mode {
+    case .smart:
+        runSmart(menuBar: menuBar, activity: activity)
+    case .fixed:
+        runFixed(menuBar: menuBar, activity: activity)
+    }
+}
+
+@MainActor
+private func runSmart(menuBar: MenuBarToggler, activity: NSObjectProtocol) {
+    let artifacts = locateArtifacts()
+    let controller = SmartController(menuBar: menuBar)
 
     // Prime with a one-shot Now Playing fetch so the first logged
     // evaluation reflects current state, not a blank placeholder
@@ -61,8 +78,21 @@ func runForeground() {
         controller.stop()
     }
 
-    Log.general.notice("houdini \(version, privacy: .public) running")
-    print("houdini \(version) running. Press Ctrl-C to quit.")
+    withExtendedLifetime((signalSources, activity)) {
+        NSApp.run()
+    }
+}
+
+@MainActor
+private func runFixed(menuBar: MenuBarToggler, activity: NSObjectProtocol) {
+    let controller = FixedController(menuBar: menuBar)
+    controller.start()
+
+    let signalSources = installSignalHandlers {
+        menuBar.resetToVisible()
+        controller.stop()
+    }
+
     withExtendedLifetime((signalSources, activity)) {
         NSApp.run()
     }
@@ -96,17 +126,28 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
 @MainActor
 func runStatus() -> Never {
     let daemonRunning = probeDaemonRunning()
+    let mode = ModeState.read()
     let adapterAlive = subprocessAlive(matching: AdapterClient.statusPgrepPattern)
     let dockLogAlive = subprocessAlive(matching: DockSpaceWatcher.statusPgrepPattern)
     let hotkeyState = daemonRunning ? (HotkeyState.read() ?? "unknown") : "n/a"
     let axState = daemonRunning ? (AccessibilityState.read() ?? "unknown") : "n/a"
     print("version:        \(version)")
+    print("mode:           \(mode.rawValue)")
     print("daemon:         \(daemonRunning ? "running" : "not running")")
-    print("adapter:        \(adapterAlive ? "running" : "not running")")
-    print("dock log:       \(dockLogAlive ? "running" : "not running")")
+    switch mode {
+    case .smart:
+        print("adapter:        \(adapterAlive ? "running" : "not running")")
+        print("dock log:       \(dockLogAlive ? "running" : "not running")")
+    case .fixed:
+        print("adapter:        n/a (fixed mode)")
+        print("dock log:       n/a (fixed mode)")
+    }
     print("hotkey:         \(hotkeyState)")
     print("accessibility:  \(axState)")
-    let healthy = daemonRunning && adapterAlive && dockLogAlive
+    let healthy: Bool = switch mode {
+    case .smart: daemonRunning && adapterAlive && dockLogAlive
+    case .fixed: daemonRunning && hotkeyState == "registered"
+    }
     exit(healthy ? 0 : 1)
 }
 
@@ -119,6 +160,21 @@ private func subprocessAlive(matching pattern: String) -> Bool {
     do { try p.run() } catch { return false }
     p.waitUntilExit()
     return p.terminationStatus == 0
+}
+
+// MARK: - mode
+
+@MainActor
+func runMode(args: [String]) -> Never {
+    guard args.count == 1, let mode = Mode(rawValue: args[0]) else {
+        die("usage: houdini mode <smart|fixed>")
+    }
+    ModeState.write(mode)
+    print("mode set to \(mode.rawValue)")
+    if probeDaemonRunning() {
+        print("daemon is running; restart to apply: brew services restart houdini")
+    }
+    exit(0)
 }
 
 // MARK: - version
@@ -190,15 +246,20 @@ func runLogs(args: [String]) -> Never {
 func usage() {
     print("""
     houdini — hides the menu bar when the frontmost fullscreen app is
-    the same one playing in the system Now Playing widget.
+    the same one playing in the system Now Playing widget (smart mode),
+    or under manual hotkey control (fixed mode).
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
-      houdini status            Print version, daemon state, adapter
-                                + dock-log subprocess health, hotkey
-                                registration, and Accessibility
-                                permission. Exits non-zero if the
-                                daemon or either subprocess isn't
+      houdini mode smart|fixed  Set the mode. Default is `smart`.
+                                Restart the daemon to apply:
+                                `brew services restart houdini`.
+                                Read the current mode with `houdini status`.
+      houdini status            Print version, mode, daemon state,
+                                subprocess health (smart mode only),
+                                hotkey registration, and Accessibility
+                                permission. Exits non-zero if required
+                                components for the active mode aren't
                                 running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —

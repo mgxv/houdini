@@ -27,18 +27,35 @@ macOS's native "Automatically hide and show the menu bar in full screen" pref is
 
 Pause, switch apps, or exit fullscreen, and the bar comes back.
 
-## How it works
+## Modes
 
-houdini hides the menu bar only when **all** of these are true:
+Set with `houdini mode <smart|fixed>`, then `brew services restart houdini` to apply. Default is `smart`. Current mode shows in `houdini status`.
 
-1. An app is in native fullscreen.
-2. That app is the frontmost (focused) app.
-3. That same app is actively playing media via Now Playing.
-4. The focused window's title contains the Now Playing track title (or vice versa). Distinguishes between two windows of the same app — e.g. a playing FS Chrome tab vs. a different FS Chrome window. The reverse direction handles native players whose window title is a shorter form of the NP string.
+- <details><summary><strong>Smart</strong> — automatic, signal-driven (default)</summary>
 
-When any becomes false, the menu bar comes back.
+  Hides the menu bar only when **all** of these are true:
 
-For the signal sources and the gate-by-gate decision diagram, see [Architecture](#architecture) below.
+  1. An app is in native fullscreen.
+  2. That app is the frontmost (focused) app.
+  3. That same app is actively playing media via Now Playing.
+  4. The focused window's title contains the Now Playing track title (or vice versa). Distinguishes between two windows of the same app — e.g. a playing FS Chrome tab vs. a different FS Chrome window. The reverse direction handles native players whose window title is a shorter form of the NP string.
+
+  When any becomes false, the menu bar comes back. The hotkey overrules per-tab — see [Hotkey](#hotkey). For signal sources and the gate-by-gate diagram, see [Architecture](#architecture).
+
+  </details>
+
+- <details><summary><strong>Fixed</strong> — manual hotkey toggle</summary>
+
+  No automatic logic. The menu bar is visible by default; pressing the hotkey hides it, pressing again shows it.
+
+  Useful when:
+  - You want full manual control over fullscreen menu-bar visibility.
+  - You don't want to grant Accessibility, and process-level matching isn't enough.
+  - Now Playing isn't reliable for the apps you use.
+
+  No Dock log, no AX, no Now Playing subprocess — just the hotkey. Toggle state isn't persisted across daemon restart; the bar starts visible.
+
+  </details>
 
 ## Hardware note
 
@@ -88,13 +105,17 @@ brew services start   houdini     # start and enable at login
 brew services stop    houdini     # stop and disable
 brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
+
+houdini mode smart|fixed          # set mode (restart to apply); current mode shows in `houdini status`
 ```
 
 Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
 
-## Manual override
+## Hotkey
 
-`⌃⌥⌘M` (Ctrl+Option+Cmd+M) flips the menu bar yourself — force-hide if it's showing, force-show if it's hidden.
+`⌃⌥⌘M` (Ctrl+Option+Cmd+M). Behavior depends on the active [mode](#modes).
+
+**In smart mode** — overrules the daemon's automatic decision for the current tab/window:
 
 - **Sticky to the tab/window** where you set it. Pinned on `(bundle id, focused window title, Now Playing title)`.
 - **Survives** pause/resume, AX title wobble, FS↔FS hops, and switching to other apps.
@@ -103,66 +124,22 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 - **Press again on the same tab** to flip the pin to the opposite direction. Re-pinning under the same context replaces the prior entry, so contradictory pins don't accumulate.
 - **In-memory only** — cleared on daemon restart.
 
-When the focused window has no AX title (Accessibility not granted, or a login-window-style edge), the press becomes a one-shot fallback that clears on the next real event — preserving the original UX in that path.
+When the focused window has no AX title (Accessibility not granted, or a login-window-style edge), the press becomes a one-shot fallback that clears on the next real event.
 
 It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be.
 
-## Diagnostics
+**In fixed mode** — plain toggle: press hides, press again shows. No per-tab pinning, no daemon-driven decisions to overrule. If the hotkey doesn't toggle, check `houdini status` — the `hotkey:` field should read `registered`.
+
+## Smart mode internals
+
+How smart mode works under the hood, how to inspect it, and how to debug it. Fixed mode bypasses all of this — `houdini status` is mode-aware, but the gate semantics, signal pipeline, and log breadcrumbs below are smart-only.
+
+### Troubleshooting
 
 <details>
 <summary>Click to expand</summary>
 
-```bash
-houdini status      # version, daemon state, adapter/dock-log subprocess
-                    # health, hotkey registration, Accessibility permission
-houdini logs        # stream every houdini unified-log entry at debug level
-houdini version     # print version
-houdini help        # full usage
-```
-
-`houdini status` is the fastest way to confirm the install. It checks:
-
-- Which `houdini` is in your `$PATH` (version).
-- Whether a daemon currently holds the instance lock.
-- Whether the two subprocesses (`mediaremote-adapter`, the Dock-log `log stream`) are alive.
-- Whether the [Manual override](#manual-override) hotkey registered (`registered` / `failed` / `unknown`).
-- Whether Accessibility is granted.
-
-Exits non-zero if the daemon or either subprocess isn't running. The hotkey and accessibility lines don't affect the exit code — both are graceful-degradation features.
-
-For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
-
-### Unified log
-
-Subsystem `com.github.mgxv.houdini`, three categories:
-
-- **`controller`** — hide/show snapshots (info), per-input breadcrumbs (debug):
-  - `→ dock_rx fs=… pid=…` — parsed `Space Forces Hidden:` lines.
-  - `→ dock_rx stay_space_change` — the FS↔FS hop pulse.
-  - `→ front_rx pid=… bundle=… name=…` — AppKit `didActivateApplicationNotification`.
-  - `→ ax_rx name=… app=… pid=… window=…` — per AX focus / UI-element / title notification.
-  - `→ eval_skipped trig=…` — snapshot equal to the previous one.
-  - `→ eval_skipped_no_window trig=window` — AX-driven evaluation with a transient nil window title; suppressed so the bar doesn't flicker on every keystroke.
-- **`adapter`** — `→ np_rx type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug).
-- **`general`** — startup/shutdown notices, warnings (one-shot AX-permission notice from `noteAXError`), errors (info / error).
-
-`houdini logs` streams all three categories at debug level — no flags, one stream, ready to paste into a bug report:
-
-```bash
-houdini logs                                                              # live
-log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
-```
-
-Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
-
-</details>
-
-## Troubleshooting
-
-<details>
-<summary>Click to expand</summary>
-
-### The menu bar isn't hiding
+#### The menu bar isn't hiding
 
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a snapshot:
 
@@ -188,7 +165,7 @@ Field reference:
 
 Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ front_rx`, `→ dock_rx`, `→ ax_rx`, `→ eval_skipped` — so a wrong decision can be traced back to the data that drove it.
 
-#### Common reasons a `show` is logged when you expected `hide`
+##### Common reasons a `show` is logged when you expected `hide`
 
 - **`fs=no`** (`show(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
 - **`play=no`** (`show(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
@@ -196,13 +173,13 @@ Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ 
 - **`np_tx=[pid=null,…]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (browser tabs without media-session metadata) never register with the system widget.
 - **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tabbed to a different app.
 - **front bundle ≠ np parent and `resp` doesn't match the front pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
-- **`win` doesn't overlap `title`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title and the NP track share no substring in either direction. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. With AX denied (`probe=denied`) the check falls through to lenient hide; with AX granted, a real mismatch surfaces. If a delayed AX event has stuck this gate on the wrong window, press `⌃⌥⌘M` (see [Manual override](#manual-override)). For services that intentionally keep these two strings disjoint, see [HBO Max and episode-only window titles](#hbo-max-and-episode-only-window-titles) below.
+- **`win` doesn't overlap `title`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title and the NP track share no substring in either direction. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. With AX denied (`probe=denied`) the check falls through to lenient hide; with AX granted, a real mismatch surfaces. If a delayed AX event has stuck this gate on the wrong window, press `⌃⌥⌘M` (see [Hotkey](#hotkey)). For services that intentionally keep these two strings disjoint, see [HBO Max and episode-only window titles](#hbo-max-and-episode-only-window-titles) below.
 
-### Is it actually running?
+#### Is it actually running?
 
-`houdini status` prints daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if the daemon or either subprocess isn't running. If a subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
+`houdini status` prints version, mode, daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if a load-bearing component for the active mode is missing. If a subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
 
-### Starting clean
+#### Starting clean
 
 Clear orphan subprocesses or a foreground `./houdini` you forgot about:
 
@@ -213,7 +190,7 @@ pkill -f mediaremote-adapter
 brew services start houdini
 ```
 
-### HBO Max and episode-only window titles
+#### HBO Max and episode-only window titles
 
 A few streaming services put only the *episode* name in the browser's window title and only the *show* name in Now Playing. HBO Max is the canonical case:
 
@@ -226,11 +203,64 @@ Neither string contains the other in either direction, so gate 7 fires `show(win
 
 Counter-intuitively this means **granting Accessibility actually keeps the bar visible for these services**. Without Accessibility, gate 7 has no window title to compare against (`probe=denied`) and falls through to lenient hide; with Accessibility, it sees a real mismatch and refuses. There's no daemon-side fix — the two strings simply don't share enough information to align.
 
-The escape hatch is the manual override: press `⌃⌥⌘M` once on the playing tab to pin the bar hidden. The pin survives pause, AX title wobble, FS↔FS hops, and the `Audio playing` annotation Chrome adds while audio is active. But because HBO Max rewrites the window title from one episode title to the next without keeping the show name visible, the pin's NP-axis fallback can't anchor across episodes either — press `⌃⌥⌘M` again at each episode change to re-pin.
+The escape hatch is the [hotkey](#hotkey): press `⌃⌥⌘M` once on the playing tab to pin the bar hidden. The pin survives pause, AX title wobble, FS↔FS hops, and the `Audio playing` annotation Chrome adds while audio is active. But because HBO Max rewrites the window title from one episode title to the next without keeping the show name visible, the pin's NP-axis fallback can't anchor across episodes either — press `⌃⌥⌘M` again at each episode change to re-pin. Or switch to [fixed mode](#modes), where the hotkey is a plain toggle and isn't bound to window-title state.
 
 </details>
 
-## Architecture
+### Diagnostics
+
+<details>
+<summary>Click to expand</summary>
+
+```bash
+houdini status      # version, mode, daemon state, subprocess health
+                    # (smart mode), hotkey registration, Accessibility
+houdini logs        # stream every houdini unified-log entry at debug level
+houdini version     # print version
+houdini help        # full usage
+```
+
+`houdini status` is the fastest way to confirm the install. It checks:
+
+- Which `houdini` is in your `$PATH` (version).
+- The active [mode](#modes) (`smart` or `fixed`).
+- Whether a daemon currently holds the instance lock.
+- Whether the two subprocesses (`mediaremote-adapter`, the Dock-log `log stream`) are alive — smart mode only; fixed mode prints `n/a (fixed mode)`.
+- Whether the [hotkey](#hotkey) registered (`registered` / `failed` / `unknown`).
+- Whether Accessibility is granted.
+
+Exit code is non-zero if a load-bearing component is missing for the active mode: in smart mode, the daemon and both subprocesses must be running; in fixed mode, the daemon must be running with the hotkey registered. Accessibility is informational in both modes.
+
+For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
+
+#### Unified log
+
+Subsystem `com.github.mgxv.houdini`, three categories:
+
+- **`controller`** — hide/show snapshots (info), per-input breadcrumbs (debug):
+  - `→ dock_rx fs=… pid=…` — parsed `Space Forces Hidden:` lines.
+  - `→ dock_rx stay_space_change` — the FS↔FS hop pulse.
+  - `→ front_rx pid=… bundle=… name=…` — AppKit `didActivateApplicationNotification`.
+  - `→ ax_rx name=… app=… pid=… window=…` — per AX focus / UI-element / title notification.
+  - `→ eval_skipped trig=…` — snapshot equal to the previous one.
+  - `→ eval_skipped_no_window trig=window` — AX-driven evaluation with a transient nil window title; suppressed so the bar doesn't flicker on every keystroke.
+- **`adapter`** — `→ np_rx type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug).
+- **`general`** — startup/shutdown notices, warnings (one-shot AX-permission notice from `noteAXError`), errors (info / error).
+
+In fixed mode only `controller` (hide/show via hotkey) and `general` (startup/shutdown) emit; the `adapter` category is silent because the subprocess isn't started.
+
+`houdini logs` streams all three categories at debug level — no flags, one stream, ready to paste into a bug report:
+
+```bash
+houdini logs                                                              # live
+log show --predicate 'subsystem == "com.github.mgxv.houdini"' --last 1h   # history
+```
+
+Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle **Action → Include Debug Messages** / **Include Info Messages**.
+
+</details>
+
+### Architecture
 
 <details>
 <summary>Click to expand</summary>
@@ -252,7 +282,7 @@ The escape hatch is the manual override: press `⌃⌥⌘M` once on the playing 
                                          │
                                          ▼
                        ┌──────────────────────────────────────┐
-                       │              Controller              │
+                       │            SmartController           │
                        │     + initial launch trigger (start) │
                        └──────────────────┬───────────────────┘
                                           ▼

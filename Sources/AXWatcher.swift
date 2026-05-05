@@ -26,7 +26,7 @@ final class AXWatcher {
     private let onChange: @MainActor (String, AXUIElement) -> Void
 
     /// Monotonic counter of distinct focused-element shifts.
-    /// Folded into `Controller.Snapshot` so `signalsEqual`
+    /// Folded into `SmartController.Snapshot` so `signalsEqual`
     /// detects tab switches even when the window title is stable
     /// across them — otherwise the no-context `globalOverrule`
     /// fallback would never clear on `.window` triggers in that
@@ -128,7 +128,7 @@ final class AXWatcher {
     // MARK: Internal helpers
 
     /// Maintains `axFocusEpoch` and `lastFocusedElement`. Bumps
-    /// only on real focus shifts so the Controller can distinguish
+    /// only on real focus shifts so the SmartController can distinguish
     /// "user moved focus" (tab switch, click into a different
     /// pane) from constant AX chatter during playback.
     private func updateFocusEpoch(notification: String, element: AXUIElement) {

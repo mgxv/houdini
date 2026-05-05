@@ -18,6 +18,8 @@ MainActor.assumeIsolated {
         runVersion()
     case "logs":
         runLogs(args: Array(args.dropFirst()))
+    case "mode":
+        runMode(args: Array(args.dropFirst()))
     case "status":
         runStatus()
     case "":
