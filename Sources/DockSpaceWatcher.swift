@@ -18,15 +18,34 @@ import Foundation
 /// identifier when `isFullScreen == true`, and nil otherwise (Dock's
 /// exit log doesn't carry a PID, just confirmation that we're back on
 /// a non-FS Space).
+///
+/// `dockWindowTitle` is the FS-tile's `name=` field, captured at
+/// FS-entry. Takes priority over the AX probe for gate 7 on
+/// `.dockFs` evaluations; nil on FS-exit / stay pulses.
 struct DockFullScreenState: Equatable {
     let isFullScreen: Bool
     let fsOwnerPID: FSOwnerPID?
+    let dockWindowTitle: String?
+
+    init(
+        isFullScreen: Bool,
+        fsOwnerPID: FSOwnerPID?,
+        dockWindowTitle: String? = nil,
+    ) {
+        self.isFullScreen = isFullScreen
+        self.fsOwnerPID = fsOwnerPID
+        self.dockWindowTitle = dockWindowTitle
+    }
 
     /// Default until any Dock event arrives. If the user is
     /// *already* in a fullscreen Space when the daemon launches, we
     /// report `isFullScreen=false` until the next Space transition
     /// corrects us — menu bar stays visible until then.
-    static let initial = DockFullScreenState(isFullScreen: false, fsOwnerPID: nil)
+    static let initial = DockFullScreenState(
+        isFullScreen: false,
+        fsOwnerPID: nil,
+        dockWindowTitle: nil,
+    )
 }
 
 /// Events from the dock-visibility log channel. `staySpaceChange`
@@ -139,8 +158,9 @@ final class DockSpaceWatcher {
             switch event {
             case let .fullScreenState(state):
                 let pidField = state.fsOwnerPID.map { "\($0.rawValue)" } ?? "null"
+                let nameField = state.dockWindowTitle.map { "\"\($0)\"" } ?? "null"
                 Log.controller.debug(
-                    "→ dock_rx fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public)",
+                    "→ dock_rx fs=\(state.isFullScreen, privacy: .public) pid=\(pidField, privacy: .public) name=\(nameField, privacy: .public)",
                 )
             case .staySpaceChange:
                 Log.controller.debug("→ dock_rx stay_space_change")
@@ -158,7 +178,7 @@ final class DockSpaceWatcher {
     ///
     /// `Space Forces Hidden:` exit messages omit the pid and surface
     /// as `pid=nil`, which `menuBarDecision`'s non-nil pid guard
-    /// then rejects.
+    /// then rejects. `dockWindowTitle` is extracted only on FS-entry.
     nonisolated static func parse(_ line: String) -> DockSpaceEvent? {
         if line.contains("Skipping no-op state update") {
             return .staySpaceChange
@@ -175,16 +195,49 @@ final class DockSpaceWatcher {
 
         // `\b` prevents matching the `pid=` suffix of `spid=…` if
         // Dock ever switches the space-id separator from `:` to `=`.
-        // Defensive — today's traces use `(spid: N)`.
+        // Defensive — today's traces use `(spid: N)`. `raw > 0` rejects
+        // `pid=0`: responsibility-pid returns 0 for untracked pids, so
+        // a zero `fsOwnerPID` would false-match via gate 5.
         var fsOwnerPID: FSOwnerPID?
+        var pidEnd: String.Index?
         if let match = line.range(of: #"\bpid=\d+"#, options: .regularExpression) {
             let digits = line[match].dropFirst("pid=".count)
-            if let raw = pid_t(digits) { fsOwnerPID = FSOwnerPID(raw) }
+            if let raw = pid_t(digits), raw > 0 { fsOwnerPID = FSOwnerPID(raw) }
+            pidEnd = match.upperBound
         }
+
+        let dockWindowTitle = isFullScreen
+            ? extractTileName(in: line, after: pidEnd)
+            : nil
 
         return .fullScreenState(DockFullScreenState(
             isFullScreen: isFullScreen,
             fsOwnerPID: fsOwnerPID,
+            dockWindowTitle: dockWindowTitle,
         ))
+    }
+
+    /// Extracts the tile's `name=…` value, terminated by
+    /// ` space=CGSSpace`. The leading space in ` name=` disambiguates
+    /// it from `appName=`, which always precedes the title.
+    private nonisolated static func extractTileName(
+        in line: String,
+        after pidEnd: String.Index?,
+    ) -> String? {
+        guard let pidEnd, pidEnd < line.endIndex else { return nil }
+        guard let nameStart = line.range(
+            of: " name=",
+            range: pidEnd ..< line.endIndex,
+        ) else { return nil }
+        let valueStart = nameStart.upperBound
+        guard valueStart <= line.endIndex,
+              let terminator = line.range(
+                  of: " space=CGSSpace",
+                  range: valueStart ..< line.endIndex,
+              )
+        else { return nil }
+        let raw = String(line[valueStart ..< terminator.lowerBound])
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
