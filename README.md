@@ -129,16 +129,18 @@ When the focused window has no AX title (Accessibility not granted, or a login-w
 
 It's a fallback for the rare moments when macOS is slow to tell houdini about a focused window change, leaving the bar visible during a fullscreen video, or hidden when it shouldn't be.
 
-**In fixed mode** — plain toggle: press hides, press again shows. No per-tab pinning, no daemon-driven decisions to overrule.
+**In fixed mode** — plain toggle: press hides, press again shows. No per-tab pinning, no daemon-driven decisions to overrule. If the hotkey doesn't toggle, check `houdini status` — the `hotkey:` field should read `registered`.
 
-## Troubleshooting
+## Smart mode internals
+
+How smart mode works under the hood, how to inspect it, and how to debug it. Fixed mode bypasses all of this — `houdini status` is mode-aware, but the gate semantics, signal pipeline, and log breadcrumbs below are smart-only.
+
+### Troubleshooting
 
 <details>
 <summary>Click to expand</summary>
 
-This section is **smart-mode** specific — fixed mode has no automatic logic to debug. If the hotkey isn't toggling the bar in fixed mode, check `houdini status` (the `hotkey:` field should read `registered`); see also the [Hotkey](#hotkey) section.
-
-### The menu bar isn't hiding
+#### The menu bar isn't hiding
 
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a snapshot:
 
@@ -164,7 +166,7 @@ Field reference:
 
 Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ front_rx`, `→ dock_rx`, `→ ax_rx`, `→ eval_skipped` — so a wrong decision can be traced back to the data that drove it.
 
-#### Common reasons a `show` is logged when you expected `hide`
+##### Common reasons a `show` is logged when you expected `hide`
 
 - **`fs=no`** (`show(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
 - **`play=no`** (`show(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
@@ -174,11 +176,11 @@ Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ 
 - **front bundle ≠ np parent and `resp` doesn't match the front pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
 - **`win` doesn't overlap `title`** (`show(window_mismatch)`) — same-app match passed, but the focused window's title and the NP track share no substring in either direction. Two FS Chrome windows on different displays, only one playing music: only the playing one gets the bar hidden. With AX denied (`probe=denied`) the check falls through to lenient hide; with AX granted, a real mismatch surfaces. If a delayed AX event has stuck this gate on the wrong window, press `⌃⌥⌘M` (see [Hotkey](#hotkey)). For services that intentionally keep these two strings disjoint, see [HBO Max and episode-only window titles](#hbo-max-and-episode-only-window-titles) below.
 
-### Is it actually running?
+#### Is it actually running?
 
 `houdini status` prints version, mode, daemon, adapter, dock-log, hotkey, and Accessibility state in one go and exits non-zero if a load-bearing component for the active mode is missing. If a subprocess dies unexpectedly, the daemon emits an error to the unified log (see `houdini logs`) and exits; launchd then relaunches it via `brew services`.
 
-### Starting clean
+#### Starting clean
 
 Clear orphan subprocesses or a foreground `./houdini` you forgot about:
 
@@ -189,7 +191,7 @@ pkill -f mediaremote-adapter
 brew services start houdini
 ```
 
-### HBO Max and episode-only window titles
+#### HBO Max and episode-only window titles
 
 A few streaming services put only the *episode* name in the browser's window title and only the *show* name in Now Playing. HBO Max is the canonical case:
 
@@ -206,7 +208,7 @@ The escape hatch is the [hotkey](#hotkey): press `⌃⌥⌘M` once on the playin
 
 </details>
 
-## Diagnostics
+### Diagnostics
 
 <details>
 <summary>Click to expand</summary>
@@ -232,7 +234,7 @@ Exit code is non-zero if a load-bearing component is missing for the active mode
 
 For the live decision (frontmost app, Now Playing, hide/show), watch `houdini logs`.
 
-### Unified log
+#### Unified log
 
 Subsystem `com.github.mgxv.houdini`, three categories:
 
@@ -259,12 +261,10 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 
 </details>
 
-## Architecture
+### Architecture
 
 <details>
 <summary>Click to expand</summary>
-
-This describes **smart mode**. In **fixed mode** the daemon registers only the hotkey and the menu-bar toggler — none of the watchers, subprocesses, or gates below run.
 
 ```
 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
