@@ -211,7 +211,7 @@ func axFocusedWindowTitle(forElement element: AXUIElement) -> String? {
 /// Strips browser-injected annotations that wobble while the
 /// underlying tab is unchanged — Chrome's ` - Audio playing` /
 /// ` - Audio muted` suffix and `(N) ` notification-count prefix.
-/// Used as the keying basis for `Controller.overrideMap` so the
+/// Used as the keying basis for `SmartController.overrideMap` so the
 /// wobble doesn't drop a sticky override.
 func normalizeWindowTitle(_ title: String) -> String {
     var t = title

@@ -1,5 +1,5 @@
 // Pin the per-tab override key + window-title normalizer that back
-// the sticky `overrideMap` in Controller. Decision-gate semantics
+// the sticky `overrideMap` in SmartController. Decision-gate semantics
 // are pinned by MenuBarDecisionTests; these cases cover only the
 // keying/normalization helpers.
 
@@ -697,13 +697,13 @@ struct OverrideKeyOverlapsTests {
 // MARK: - Override-map re-pin behavior
 
 /// End-to-end tests over the filter+insert pattern from
-/// `Controller.toggleOverrule`. Doesn't instantiate Controller (it's
-/// `@MainActor` with live watchers); instead pins the algorithmic
-/// contract: re-pinning under an overlapping context replaces, while
-/// disjoint pins coexist.
+/// `SmartController.toggleOverrule`. Doesn't instantiate
+/// SmartController (it's `@MainActor` with live watchers); instead
+/// pins the algorithmic contract: re-pinning under an overlapping
+/// context replaces, while disjoint pins coexist.
 @Suite("Override map re-pin behavior")
 struct OverrideMapRepinTests {
-    /// Mirror of the inline pattern in `Controller.toggleOverrule`.
+    /// Mirror of the inline pattern in `SmartController.toggleOverrule`.
     private func repin(
         _ map: inout [OverrideKey: Overrule],
         _ key: OverrideKey,

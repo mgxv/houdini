@@ -1,7 +1,7 @@
 // The seven-gate decision that drives the menu bar. Pure function
 // of (Dock fullscreen state, Now Playing state, frontmost app,
 // focused-window title) returning `hide` or `show(reason)`. Pinned
-// by `MenuBarDecisionTests`; Controller composes the inputs and
+// by `MenuBarDecisionTests`; SmartController composes the inputs and
 // applies the verdict, but the gates themselves live here.
 
 import Foundation

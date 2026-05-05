@@ -27,7 +27,7 @@ enum Overrule: String {
     case forceShow = "force_show"
 }
 
-/// Tab/window identity for `Controller.overrideMap`. `axFocusedWindowTitle`
+/// Tab/window identity for `SmartController.overrideMap`. `axFocusedWindowTitle`
 /// is the focused window's normalized AX title — the per-tab
 /// signal, since browsers put the page name there. `appKitFrontBundle`
 /// guards against same-titled windows in different apps colliding.
@@ -99,10 +99,10 @@ private enum OverruleSource: Equatable {
     case global
 }
 
-// MARK: - Controller
+// MARK: - SmartController
 
 @MainActor
-final class Controller: NSObject {
+final class SmartController: NSObject {
     // MARK: - Snapshot
 
     /// Decision is derived, so Equatable on the inputs alone dedups
@@ -518,7 +518,7 @@ final class Controller: NSObject {
     /// Captures a consistent snapshot of every input the decision
     /// reads, plus `axFocusEpoch` (so `signalsEqual` can spot tab
     /// switches) and the resolved overrule for this snapshot's
-    /// context. Pure function of `Controller`'s cached state plus
+    /// context. Pure function of `SmartController`'s cached state plus
     /// a single fresh AX/CG probe — never mutates anything.
     ///
     /// `trigger` is consumed only by the Dock-priority rule below.
