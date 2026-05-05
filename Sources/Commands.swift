@@ -166,12 +166,8 @@ private func subprocessAlive(matching pattern: String) -> Bool {
 
 @MainActor
 func runMode(args: [String]) -> Never {
-    if args.isEmpty {
-        print(ModeState.read().rawValue)
-        exit(0)
-    }
     guard args.count == 1, let mode = Mode(rawValue: args[0]) else {
-        die("usage: houdini mode [smart|fixed]")
+        die("usage: houdini mode <smart|fixed>")
     }
     ModeState.write(mode)
     print("mode set to \(mode.rawValue)")
@@ -255,10 +251,10 @@ func usage() {
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
-      houdini mode              Print the current mode (smart or fixed)
       houdini mode smart|fixed  Set the mode. Default is `smart`.
                                 Restart the daemon to apply:
                                 `brew services restart houdini`.
+                                Read the current mode with `houdini status`.
       houdini status            Print version, mode, daemon state,
                                 subprocess health (smart mode only),
                                 hotkey registration, and Accessibility

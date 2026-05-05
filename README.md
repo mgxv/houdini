@@ -106,8 +106,7 @@ brew services stop    houdini     # stop and disable
 brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 
-houdini mode                      # print current mode
-houdini mode smart|fixed          # set mode (restart to apply)
+houdini mode smart|fixed          # set mode (restart to apply); current mode shows in `houdini status`
 ```
 
 Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
