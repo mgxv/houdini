@@ -34,9 +34,6 @@ enum Overrule: String {
 struct OverrideKey: Hashable {
     let appKitFrontBundle: String
     let axFocusedWindowTitle: String
-    /// Episode-based players (HBO Max etc.) roll the window title
-    /// per episode but keep this stable as the show name —
-    /// a second match axis at lookup time.
     let nowPlayingTitle: String?
 
     init(

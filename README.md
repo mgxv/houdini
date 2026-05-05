@@ -144,7 +144,7 @@ How smart mode works under the hood, how to inspect it, and how to debug it. Fix
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a snapshot:
 
 ```
-→ hide  trig=adapter overrule=auto appMatch=process front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube",probe=ok]
+→ hide  trig=adapter overrule=auto appMatch=process front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501,win="BLACKPINK - 'GO' M/V - YouTube",probe=ok,dockWin="BLACKPINK - 'GO' M/V - YouTube"]
 → np_tx=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
 ```
 
@@ -153,9 +153,10 @@ Field reference:
 - **`→ hide` / `→ show(reason)`** — first guard that tripped: `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`, `window_mismatch`.
 - **`trig=`** — input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `window` (an AX focus/title event), `hotkey`.
 - **`overrule=`** — `auto` (daemon-driven), or `force_hide` / `force_show` followed by `(sticky)` (per-tab pinned via the hotkey, in `overrideMap`) or `(global)` (no-key fallback used when AX or window title isn't available; auto-clears on the next signal change).
-- **`appMatch=`** — `process`, `bundle`, `both`, or `none` — which gate-6 path matched.
+- **`appMatch=`** — `process`, `bundle`, `both`, `none`, or `n/a` (when a PID is missing) — which gate-6 path matched.
 - **`resp=`** — kernel's responsibility-resolved root PID; `null` for top-level apps, a PID for helpers (WebKit.GPU resolving to Safari). What the same-app process check actually compares.
 - **`win=`** — focused window's AX title; **`title=`** on the np line is the Now Playing track title.
+- **`dockWin=`** — Dock's tile-name field captured at FS edge from the `Space Forces Hidden:` line. Used as gate 7 input on `dock_fs` / `dock_stay` triggers when AX hasn't yet populated; `null` on FS-exit and on stay pulses where the FS app changed.
 - **`probe=`** — why the AX window-title probe ended up where it did:
   - `ok` — got a title.
   - `skipped` — an earlier gate short-circuited.
@@ -163,7 +164,7 @@ Field reference:
   - `ax_failed` — AX returned an unexpected error (see `houdini logs` for the code).
   - `empty` — no matching on-screen window or all titles were empty.
 
-Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ front_rx`, `→ dock_rx`, `→ ax_rx`, `→ eval_skipped` — so a wrong decision can be traced back to the data that drove it.
+Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ front_rx`, `→ dock_rx`, `→ ax_rx`, `→ eval_skipped`, `→ eval_skipped_no_window` — so a wrong decision can be traced back to the data that drove it.
 
 ##### Common reasons a `show` is logged when you expected `hide`
 
@@ -204,6 +205,25 @@ Neither string contains the other in either direction, so gate 7 fires `show(win
 Counter-intuitively this means **granting Accessibility actually keeps the bar visible for these services**. Without Accessibility, gate 7 has no window title to compare against (`probe=denied`) and falls through to lenient hide; with Accessibility, it sees a real mismatch and refuses. There's no daemon-side fix — the two strings simply don't share enough information to align.
 
 The escape hatch is the [hotkey](#hotkey): press `⌃⌥⌘M` once on the playing tab to pin the bar hidden. The pin survives pause, AX title wobble, FS↔FS hops, and the `Audio playing` annotation Chrome adds while audio is active. But because HBO Max rewrites the window title from one episode title to the next without keeping the show name visible, the pin's NP-axis fallback can't anchor across episodes either — press `⌃⌥⌘M` again at each episode change to re-pin. Or switch to [fixed mode](#modes), where the hotkey is a plain toggle and isn't bound to window-title state.
+
+#### Safari element-level fullscreen video
+
+Affects the **in-page video fullscreen button** (the YouTube / Netflix / Apple-TV+ FS button) when **Safari itself is not already fullscreen**. Window-level fullscreen of the whole Safari window (⌃⌘F or the green stoplight) is unaffected — the FS Space is the Safari browser-chrome window with the page title preserved, so probing and Dock both succeed.
+
+In the affected path, Safari hosts the element-fullscreen surface in a helper process (`WebKit.WebContent` / `WebKit.GPU`). The visible FS window's `kCGWindowOwnerPID` belongs to that helper, and Safari's main process exposes no AX child for it — so houdini's window-title probe (which walks `CGWindowListCopyWindowInfo` filtered to the front app's PID) finds no candidate and returns `probe=empty`. Dock's tile log compounds it: with no usable title from Safari's main process, Dock falls back to writing `name=Safari` (its `appName` fallback) into the `Space Forces Hidden:` line. Gate 7 then has nothing real to substring-match against the Now Playing track:
+
+```
+show(window_mismatch)  trig=dock_fs …,probe=empty,dockWin=Safari
+np_tx=WebKit.GPU[…,parent=com.apple.Safari,…,play=yes,title="<video title>"]
+```
+
+Chrome / Brave / Edge aren't affected by either path — they host element-FS video in the main browser-chrome window with the page title preserved.
+
+Workarounds:
+
+- **Fullscreen the Safari window first** (⌃⌘F or green stoplight), *then* play the video inline. Avoids the helper-owned surface entirely.
+- Press `⌃⌥⌘M` on the playing tab to pin the bar hidden.
+- Switch to [fixed mode](#modes), where the hotkey is a plain toggle.
 
 </details>
 
@@ -287,8 +307,10 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
                        └──────────────────┬───────────────────┘
                                           ▼
                                     takeSnapshot()
-                            (probes AX window title only when
-                             FS + playing + both PIDs present)
+                            (probes AX window title whenever
+                             a fullscreen Space has a frontmost
+                             PID; gate 1 still avoids the probe
+                             outside FS)
                                           │
                                           ▼
                           menuBarDecision (sequential gates)
@@ -358,7 +380,7 @@ Why not AX for FS state: AX notifications flake during FS animations and `kAXFul
 **Focused window title — Accessibility, two paths.**
 
 - An `AXObserver` subscribed to `kAXFocusedWindowChangedNotification`, `kAXFocusedUIElementChangedNotification`, and per-window `kAXTitleChangedNotification` (re-pointed each time the focused window changes). Fires `evaluate(.window)` on every focus or title change.
-- On-demand title resolution at snapshot time: walk `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` in z-order, bridge each `CGWindowID` to its `AXUIElement` via the private `_AXUIElementGetWindow` SPI, return the first non-empty `kAXTitleAttribute`. Z-order rather than `kAXFocusedWindow` because the latter doesn't track Space swipes and Chrome puts a titleless helper window ahead of the actual content in fullscreen.
+- On-demand title resolution at snapshot time: walk `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements])` in z-order, bridge each `CGWindowID` to its `AXUIElement` via the private `_AXUIElementGetWindow` SPI, return the first non-empty `kAXTitleAttribute`. Z-order rather than `kAXFocusedWindow` because the latter doesn't track Space swipes and Chrome puts a titleless helper window ahead of the actual content in fullscreen.
 - When AX permission isn't granted the watcher is a no-op (logged once via `noteAXError`) and the daemon degrades to process-level matching only.
 
 No entitlements required. Two private SPIs (`responsibility_get_pid_responsible_for_pid`, `_AXUIElementGetWindow`); everything else is public API.
