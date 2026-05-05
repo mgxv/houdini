@@ -300,6 +300,16 @@ final class Controller: NSObject {
         let app = NSWorkspace.shared.frontmostApplication
         Log.controller.debug("→ \(Self.formatFrontChange(app), privacy: .public)")
         axWatcher.attach(pid: app?.processIdentifier)
+        // front_app fires ~30–60ms before dock_stay on FS↔FS hops.
+        // Refresh fsOwnerPID so gate 5 doesn't trip on the prior
+        // Space's cached owner; dock_stay then dedups.
+        if dockFs.isFullScreen, let pid = app?.processIdentifier {
+            dockFs = DockFullScreenState(
+                isFullScreen: true,
+                fsOwnerPID: FSOwnerPID(pid),
+                dockWindowTitle: dockFs.dockWindowTitle,
+            )
+        }
         evaluate(trigger: .frontApp)
     }
 
