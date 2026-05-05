@@ -247,6 +247,7 @@ fastlane/test_output
 iOSInjectionProject/
 
 ### VisualStudioCode ###
+.vscode/
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json

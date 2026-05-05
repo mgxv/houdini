@@ -35,6 +35,7 @@ func noteAXError(_ error: AXError) {
     guard error != .success, !reportedAXErrors.contains(error) else { return }
     reportedAXErrors.insert(error)
     if error == .apiDisabled {
+        AccessibilityState.write("denied")
         warn(accessibilityPermissionMessage)
     } else {
         Log.general.error(
@@ -223,4 +224,45 @@ func normalizeWindowTitle(_ title: String) -> String {
         t.removeSubrange(m)
     }
     return t.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - AccessibilityState (on-disk handoff for `houdini status`)
+
+/// On-disk handoff so `houdini status` can read the daemon's
+/// trust outcome. The status process can't reliably check itself:
+/// TCC attributes its `AXIsProcessTrusted()` call to the parent
+/// terminal via the responsibility chain. Cleared on graceful
+/// daemon shutdown.
+enum AccessibilityState {
+    private static func url() -> URL? {
+        guard let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false,
+        ) else { return nil }
+        return appSupport
+            .appendingPathComponent(Log.subsystem, isDirectory: true)
+            .appendingPathComponent("accessibility.state")
+    }
+
+    static func write(_ state: String) {
+        guard let url = url() else { return }
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+        )
+        try? state.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    static func read() -> String? {
+        guard let url = url() else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func clear() {
+        guard let url = url() else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
 }
