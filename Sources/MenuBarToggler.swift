@@ -28,12 +28,14 @@ final class MenuBarToggler {
         write(visible: true)
     }
 
-    /// No in-process dedup: a cached "last written" value goes stale
-    /// the moment the user toggles "Automatically hide and show the
-    /// menu bar in full screen" in System Settings — we'd then skip
-    /// a write that's actually needed. SkyLight no-ops same-value
-    /// writes anyway, so re-applying every time is the simplest
-    /// correct option.
+    /// No in-process dedup here: a cached "last written" value goes
+    /// stale the moment the user toggles "Automatically hide and
+    /// show the menu bar in full screen" in System Settings — we'd
+    /// then skip a write that's actually needed. Snapshot-level
+    /// dedup in `Controller.evaluate` collapses redundant calls
+    /// before they reach this layer; SkyLight re-animates on each
+    /// `DistributedNotification` post, so suppressing duplicate
+    /// posts upstream is what prevents flicker.
     private func write(visible: Bool) {
         CFPreferencesSetValue(
             Self.key, visible as CFBoolean,
