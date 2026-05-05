@@ -31,7 +31,7 @@ Pause, switch apps, or exit fullscreen, and the bar comes back.
 
 Set with `houdini mode <smart|fixed>`, then `brew services restart houdini` to apply. Default is `smart`. Current mode shows in `houdini status`.
 
-- <details><summary><strong>Smart</strong> — automatic, signal-driven (default)</summary>
+  <details><summary><strong>Smart</strong> — automatic, signal-driven (default)</summary>
 
   Hides the menu bar only when **all** of these are true:
 
@@ -44,7 +44,7 @@ Set with `houdini mode <smart|fixed>`, then `brew services restart houdini` to a
 
   </details>
 
-- <details><summary><strong>Fixed</strong> — manual hotkey toggle</summary>
+  <details><summary><strong>Fixed</strong> — manual hotkey toggle</summary>
 
   No automatic logic. The menu bar is visible by default; pressing the hotkey hides it, pressing again shows it.
 
