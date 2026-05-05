@@ -55,8 +55,8 @@ extension OverrideKey {
         appKitFrontBundle queryBundle: String,
         axFocusedWindowTitle queryTitle: String?,
     ) -> Bool {
-        guard let q = queryTitle, !q.isEmpty else { return false }
-        return appKitFrontBundle == queryBundle && axFocusedWindowTitle == q
+        guard let query = queryTitle, !query.isEmpty else { return false }
+        return appKitFrontBundle == queryBundle && axFocusedWindowTitle == query
     }
 
     /// nil/empty on either side returns false. The window-title
@@ -69,9 +69,9 @@ extension OverrideKey {
         nowPlayingTitle queryTitle: String?,
     ) -> Bool {
         guard let stored = nowPlayingTitle, !stored.isEmpty else { return false }
-        guard let q = queryTitle, !q.isEmpty else { return false }
-        guard appKitFrontBundle == queryBundle, stored == q else { return false }
-        guard let win = queryWindowTitle, win.contains(q) else { return false }
+        guard let query = queryTitle, !query.isEmpty else { return false }
+        guard appKitFrontBundle == queryBundle, stored == query else { return false }
+        guard let win = queryWindowTitle, win.contains(query) else { return false }
         return true
     }
 
@@ -458,12 +458,12 @@ final class SmartController: NSObject {
     /// `normalizeWindowTitle` + drop empty. nil/empty in → nil out.
     private static func normalizedKeyTitle(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
-        let n = normalizeWindowTitle(raw)
-        return n.isEmpty ? nil : n
+        let normalized = normalizeWindowTitle(raw)
+        return normalized.isEmpty ? nil : normalized
     }
 
-    private static func nilIfEmpty(_ s: String?) -> String? {
-        (s?.isEmpty == false) ? s : nil
+    private static func nilIfEmpty(_ string: String?) -> String? {
+        (string?.isEmpty == false) ? string : nil
     }
 
     // MARK: - Evaluation core
