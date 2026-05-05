@@ -8,7 +8,7 @@ import Cocoa
 
 // MARK: - File-level types
 
-enum EvalTrigger: String {
+private enum EvalTrigger: String {
     case start
     case frontApp = "front_app"
     case dockFs = "dock_fs"
@@ -93,7 +93,7 @@ extension OverrideKey {
 
 /// Diagnostic only — surfaces in the log line whether a snapshot's
 /// overrule came from the per-tab map or the no-context fallback.
-enum OverruleSource: Equatable {
+private enum OverruleSource: Equatable {
     case auto
     case sticky
     case global
@@ -110,17 +110,21 @@ final class Controller: NSObject {
     /// `nowPlayingPID` are distinct types so the compiler blocks
     /// accidental role swaps.
     ///
-    /// Field-name source prefixes (one signal source per prefix):
+    /// Field-name source key (where each input comes from):
     ///
-    ///   `appKitFront*`  — AppKit `NSWorkspace.frontmostApplication`
-    ///   `axFocused*`    — Accessibility (`kAXTitleAttribute` /
-    ///                     `kAXFocusedWindow*`); `axFocusEpoch` from
-    ///                     `AXWatcher`
-    ///   `dockFs*`       — Dock log (`com.apple.dock` /
-    ///                     `dock-visibility`)
+    ///   `appKitFront*`         — AppKit `NSWorkspace.frontmostApplication`
+    ///   `axFocused*`           — Accessibility (`kAXTitleAttribute` /
+    ///                            `kAXFocusedWindow*`); `axFocusEpoch`
+    ///                            from `AXWatcher`
+    ///   `dockFs.*`             — Dock log `Space Forces Hidden:` line
+    ///                            (`com.apple.dock` / `dock-visibility`)
+    ///   `dockWindowTitle`      — `dockFs.dockWindowTitle` mirror, kept
+    ///                            on the snapshot for `dockWin=` log
+    ///                            fidelity
+    ///   `effectiveWindowTitle` — what gate 7 actually reads (AX or
+    ///                            Dock per `takeSnapshot`'s rule)
     ///   `nowPlaying*` / `isPlaying`
-    ///                   — MediaRemote via the mediaremote-adapter
-    ///                     subprocess
+    ///                          — MediaRemote via mediaremote-adapter
     private struct Snapshot: Equatable {
         let appKitFrontPID: FrontmostPID?
         let appKitFrontName: String

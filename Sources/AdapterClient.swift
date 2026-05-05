@@ -85,7 +85,7 @@ extension NowPlayingSnapshot: Decodable {
 /// "data"`; everything else (heartbeats, errors) is silently ignored.
 /// `payload` is optional so a `data` event with a missing or null
 /// payload still decodes — call sites map that to `NowPlayingSnapshot.empty`.
-struct NowPlayingStreamEvent: Decodable {
+private struct NowPlayingStreamEvent: Decodable {
     let type: String
     let payload: NowPlayingSnapshot?
 }

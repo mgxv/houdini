@@ -1,7 +1,8 @@
-// Typed wrappers around `pid_t` that distinguish the two roles a
-// process identifier plays in houdini's decision logic. Separating
-// the two types means the compiler catches mix-ups like passing a
-// frontmost PID where a Now Playing PID is expected.
+// Typed wrappers around `pid_t` that distinguish the roles a
+// process identifier plays in houdini's decision logic
+// (FrontmostPID, NowPlayingPID, FSOwnerPID). Distinct types so
+// the compiler catches mix-ups like passing a frontmost PID
+// where a Now Playing PID is expected.
 
 import Foundation
 
