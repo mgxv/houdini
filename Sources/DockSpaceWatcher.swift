@@ -219,25 +219,41 @@ final class DockSpaceWatcher {
 
     /// Extracts the tile's `name=…` value, terminated by
     /// ` space=CGSSpace`. The leading space in ` name=` disambiguates
-    /// it from `appName=`, which always precedes the title.
+    /// it from `appName=`, which always precedes the title. Returns
+    /// nil when `name=` equals `appName=` — Dock's no-real-title
+    /// fallback, captured during Safari FS re-entry races.
     private nonisolated static func extractTileName(
         in line: String,
         after pidEnd: String.Index?,
     ) -> String? {
         guard let pidEnd, pidEnd < line.endIndex else { return nil }
-        guard let nameStart = line.range(
-            of: " name=",
-            range: pidEnd ..< line.endIndex,
-        ) else { return nil }
-        let valueStart = nameStart.upperBound
-        guard valueStart <= line.endIndex,
-              let terminator = line.range(
-                  of: " space=CGSSpace",
-                  range: valueStart ..< line.endIndex,
-              )
+        let appName = extractField(" appName=", in: line, after: pidEnd, terminator: " name=")
+        guard let name = extractField(
+            " name=",
+            in: line,
+            after: pidEnd,
+            terminator: " space=CGSSpace",
+        )
         else { return nil }
-        let raw = String(line[valueStart ..< terminator.lowerBound])
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        if let appName, appName == name { return nil }
+        return name
+    }
+
+    /// Trimmed value between `key` and `terminator`, searching from
+    /// `start`. Nil if any of the three is missing or empty.
+    private nonisolated static func extractField(
+        _ key: String,
+        in line: String,
+        after start: String.Index,
+        terminator: String,
+    ) -> String? {
+        guard let r = line.range(of: key, range: start ..< line.endIndex)
+        else { return nil }
+        guard let term = line.range(
+            of: terminator, range: r.upperBound ..< line.endIndex,
+        ) else { return nil }
+        let raw = line[r.upperBound ..< term.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : String(raw)
     }
 }

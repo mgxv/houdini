@@ -285,11 +285,35 @@ struct DockSpaceWatcherTests {
             )))
     }
 
-    @Test("Captured shape: title equal to appName (NordVPN)")
+    @Test("Captured shape: title with embedded `=`, emoji, Korean, apostrophes")
+    func capturedDiverseTitle() {
+        // Real Safari capture. The embedded `=` (after `⚡️`) is the
+        // critical pin: the parser keys off ` space=CGSSpace` for
+        // termination, so any inline `=` inside the title must pass
+        // through verbatim.
+        let line = """
+        Space Forces Hidden: 1 <FullscreenSpace: 0xcaed019c0> \
+        {uuid=A7AC0B31-444F-47E2-98F7-1F9087CD337A fullscreen=true \
+        space=CGSSpace(spid: 105)} {tiles=[<TileSpace: 0x0000000cae9eca20> \
+        {orig-uuid= pid=19746 appName=Safari \
+        name=[Pre-release] LISA's upgraded Thai dance\u{26A1}\u{FE0F}= 'Crab dance'\u{266A} (point. poker face\u{1F636}) Knowing bros EP.251 - YouTube \
+        space=CGSSpace(spid: 107)}]
+        """
+        #expect(DockSpaceWatcher.parse(line)
+            == .fullScreenState(.init(
+                isFullScreen: true,
+                fsOwnerPID: FSOwnerPID(19746),
+                dockWindowTitle:
+                "[Pre-release] LISA's upgraded Thai dance\u{26A1}\u{FE0F}= 'Crab dance'\u{266A} (point. poker face\u{1F636}) Knowing bros EP.251 - YouTube",
+            )))
+    }
+
+    @Test("Captured shape: name= equals appName= → fallback discarded")
     func capturedTitleEqualsAppName() {
-        // Pins the leading-space rule against a real captured line:
-        // `appName=NordVPN name=NordVPN` would mis-extract `NordVPN`
-        // as appName under a `name=` (no leading space) pattern.
+        // `name=<appName>` is Dock's no-real-title fallback (Safari
+        // FS re-entry race; also caught here on NordVPN). Discarded.
+        // Doubles as the leading-space-rule pin — a broken `name=`
+        // would mis-extract a non-nil value and fail this assertion.
         let line = """
         Space Forces Hidden: 1 <FullscreenSpace: 0x7d98171c0> \
         {uuid=DAC75C97-0D6F-4FC2-939A-7970265B1B48 fullscreen=true \
@@ -301,7 +325,7 @@ struct DockSpaceWatcherTests {
             == .fullScreenState(.init(
                 isFullScreen: true,
                 fsOwnerPID: FSOwnerPID(4334),
-                dockWindowTitle: "NordVPN",
+                dockWindowTitle: nil,
             )))
     }
 

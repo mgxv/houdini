@@ -551,6 +551,15 @@ final class SmartController: NSObject {
             {
                 return dt
             }
+            // Dock-discarded title + AX confirmed-empty: both signals
+            // unhelpful at the FS edge. Mirror `probe=denied` (nil →
+            // gate 7 lenient) instead of the strict "" path.
+            if trigger == .dockFs || trigger == .dockStay,
+               dockWindowTitle == nil,
+               probe.status == .empty
+            {
+                return nil
+            }
             return axFocusedWindowTitle
         }()
 
