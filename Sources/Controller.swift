@@ -138,8 +138,8 @@ final class Controller: NSObject {
         /// fidelity (`dockWin=`).
         let dockWindowTitle: String?
         /// What gate 7 actually sees. Equals `axFocusedWindowTitle`
-        /// except on `.dockFs` triggers with a non-empty
-        /// `dockWindowTitle`, where Dock's value takes priority.
+        /// except on Dock-driven triggers (`.dockFs` / `.dockStay`)
+        /// with a non-empty `dockWindowTitle`, where Dock wins.
         let effectiveWindowTitle: String?
         let dockFs: DockFullScreenState
         let isPlaying: Bool
@@ -310,11 +310,7 @@ final class Controller: NSObject {
         // Refresh fsOwnerPID so gate 5 doesn't trip on the prior
         // Space's cached owner; dock_stay then dedups.
         if dockFs.isFullScreen, let pid = app?.processIdentifier {
-            dockFs = DockFullScreenState(
-                isFullScreen: true,
-                fsOwnerPID: FSOwnerPID(pid),
-                dockWindowTitle: dockFs.dockWindowTitle,
-            )
+            refreshFSOwner(pid: pid)
         }
         evaluate(trigger: .frontApp)
     }
@@ -353,14 +349,20 @@ final class Controller: NSObject {
         guard dockFs.isFullScreen,
               let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return }
-        // Preserve `dockWindowTitle` across stays — it's only consumed
-        // on `.dockFs`, and dropping it churns `signalsEqual`.
+        refreshFSOwner(pid: pid)
+        evaluate(trigger: .dockStay)
+    }
+
+    /// Drops `dockWindowTitle` when the FS app changes — stale title
+    /// from the prior Space would mis-trip gate 7 on `.dockStay`.
+    private func refreshFSOwner(pid: pid_t) {
+        let newPID = FSOwnerPID(pid)
+        let preservedTitle = dockFs.fsOwnerPID == newPID ? dockFs.dockWindowTitle : nil
         dockFs = DockFullScreenState(
             isFullScreen: true,
-            fsOwnerPID: FSOwnerPID(pid),
-            dockWindowTitle: dockFs.dockWindowTitle,
+            fsOwnerPID: newPID,
+            dockWindowTitle: preservedTitle,
         )
-        evaluate(trigger: .dockStay)
     }
 
     // MARK: - Override handling
@@ -536,15 +538,13 @@ final class Controller: NSObject {
             : .skipped
         let axFocusedWindowTitle: String? = probe.status == .empty ? "" : probe.title
 
-        // On `.dockFs`, prioritize Dock's tile-name over AX whenever
-        // it's non-empty: Dock captures the title atomically with its
-        // FS-decision, so it isn't subject to the AX title-lag race.
-        // `.denied` / `.ax_failed` are excluded — those keep the
-        // documented lenient-hide path. Non-`.dockFs` triggers keep
-        // the AX path unchanged.
+        // On Dock-driven triggers, prioritize Dock's tile-name over
+        // AX — Dock captures the title atomically with the FS state,
+        // and AX often races empty mid-Space-hop. `.denied` /
+        // `.ax_failed` keep the documented lenient-hide path.
         let dockWindowTitle = dockFs.dockWindowTitle
         let effectiveWindowTitle: String? = {
-            if trigger == .dockFs,
+            if trigger == .dockFs || trigger == .dockStay,
                probe.status != .denied,
                probe.status != .axFailed,
                let dt = dockWindowTitle, !dt.isEmpty
