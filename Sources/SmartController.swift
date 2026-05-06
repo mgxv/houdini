@@ -85,15 +85,6 @@ final class SmartController: NSObject {
             case .auto: decision.tag
             }
         }
-
-        /// Equality ignoring `overrule` — distinguishes a real
-        /// state change from a heartbeat so a no-op input can't
-        /// clear the active overrule.
-        func signalsEqual(_ other: Snapshot) -> Bool {
-            var copy = self
-            copy.overrule = other.overrule
-            return copy == other
-        }
     }
 
     // MARK: - State
@@ -106,8 +97,8 @@ final class SmartController: NSObject {
     private var nowPlayingParentBundle: String?
     private var nowPlayingTitle: String?
 
-    /// Hotkey-driven override. Auto-clears on the next real signal
-    /// change so a stale pin doesn't outlive its context.
+    /// Hotkey-driven override. Cleared only on Desktop arrival;
+    /// survives front-app switches, FS↔FS hops, and play/pause.
     private var overrule: Overrule = .auto
 
     private var lastSnapshot: Snapshot?
@@ -180,6 +171,8 @@ final class SmartController: NSObject {
             updateDockFullScreen(state)
         case .staySpaceChange:
             onStaySpaceChange()
+        case .desktopArrival:
+            onDesktopArrival()
         }
     }
 
@@ -203,6 +196,11 @@ final class SmartController: NSObject {
         evaluate(trigger: .dockStay)
     }
 
+    private func onDesktopArrival() {
+        overrule = .auto
+        menuBar.resetToVisible()
+    }
+
     private func refreshFSOwner(pid: pid_t) {
         dockFs = DockFullScreenState(
             isFullScreen: true,
@@ -213,8 +211,8 @@ final class SmartController: NSObject {
 
     // MARK: - Override handling
 
-    /// Flips the bar against its current effective state. Auto-
-    /// clears on the next real signal change.
+    /// Flips the bar against its current effective state. The pin
+    /// survives until the next Desktop arrival.
     private func toggleOverrule() {
         let snap = takeSnapshot()
         overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
@@ -227,13 +225,7 @@ final class SmartController: NSObject {
     /// here. The `trigger` is preserved through to the log line so a
     /// surprising decision can be traced back to its input.
     private func evaluate(trigger: EvalTrigger) {
-        var snap = takeSnapshot()
-
-        let signalsChanged = lastSnapshot.map { !snap.signalsEqual($0) } ?? true
-        if trigger != .hotkey, signalsChanged, overrule != .auto {
-            overrule = .auto
-            snap.overrule = .auto
-        }
+        let snap = takeSnapshot()
 
         if let last = lastSnapshot, snap == last {
             Log.controller.debug(
@@ -272,14 +264,14 @@ final class SmartController: NSObject {
     ///
     ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}
     ///       trig=<src>  overrule=<auto|force_…>
-    ///       appMatch=<…>  front_tx=<head>[…]
-    ///   → np_tx=<head>[…]
+    ///       appMatch=<…>  front_tx=<bundle>[…]
+    ///   → np_tx=<bundle>[…]
     ///
-    /// `<head>` is the bundle's last 1–2 dot components (`Chrome`,
-    /// `WebKit.GPU`) — a visual anchor for scanning. Missing
-    /// optionals render as `null` (preserving absent-vs-empty);
-    /// values with spaces are double-quoted so downstream
-    /// space-tokenizing parsers see them as one field.
+    /// `<bundle>` is the front-app / Now-Playing bundle id rendered
+    /// via `formatNullableString` (`null` for absent, `""` for empty)
+    /// — same convention as fields inside the brackets. Values with
+    /// spaces are double-quoted so downstream space-tokenizing
+    /// parsers see them as one field.
     private func logSnapshot(_ snap: Snapshot, trigger: EvalTrigger) {
         let head = Self.formatSnapshotHead(snap, trigger: trigger)
         let np = Self.formatSnapshotNowPlaying(snap)
@@ -324,23 +316,23 @@ final class SmartController: NSObject {
     }
 
     private static func formatFront(_ snap: Snapshot) -> String {
-        let head = bundleShort(snap.appKitFrontBundle) ?? ""
+        let head = formatNullableString(snap.appKitFrontBundle)
         let pid = formatNullable(snap.appKitFrontPID?.rawValue)
         let name = quoted(snap.appKitFrontName)
         let bundle = formatNullableString(snap.appKitFrontBundle)
         let resp = formatNullable(snap.appKitFrontPID?.responsiblePID)
-        let fs = snap.dockFs.isFullScreen ? "yes" : "no"
+        let fs = snap.dockFs.isFullScreen
         let fsPid = formatNullable(snap.dockFs.fsOwnerPID?.rawValue)
         return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
-        let head = bundleShort(snap.nowPlayingBundle) ?? ""
+        let head = formatNullableString(snap.nowPlayingBundle)
         let pid = formatNullable(snap.nowPlayingPID?.rawValue)
         let bundle = formatNullableString(snap.nowPlayingBundle)
         let parent = formatNullableString(snap.nowPlayingParentBundle)
         let resp = formatNullable(snap.nowPlayingPID?.responsiblePID)
-        let play = snap.isPlaying ? "yes" : "no"
+        let play = snap.isPlaying
         let title = formatNullableString(snap.nowPlayingTitle)
         return "\(head)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play),title=\(title)]"
     }
@@ -355,17 +347,6 @@ final class SmartController: NSObject {
     }
 
     // MARK: - Log formatting — string utilities
-
-    /// `com.apple.Safari` → `Safari`, `com.apple.WebKit.GPU` →
-    /// `WebKit.GPU`. Returns nil for nil/empty so the caller can
-    /// omit the head.
-    private static func bundleShort(_ bundle: String?) -> String? {
-        guard let bundle, !bundle.isEmpty else { return nil }
-        let parts = bundle.split(separator: ".")
-        return parts.count >= 3
-            ? parts.dropFirst(2).joined(separator: ".")
-            : bundle
-    }
 
     /// Specialized to pid_t so interpolation goes through Int32's
     /// direct path rather than `String(describing:)`'s reflection

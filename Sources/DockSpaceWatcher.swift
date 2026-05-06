@@ -44,11 +44,13 @@ struct DockFullScreenState: Equatable {
 }
 
 /// Events from the dock-visibility log channel. `staySpaceChange`
-/// is the `Skipping no-op state update` pulse Dock emits on silent
-/// FS↔FS Space switches — no payload, just "active Space changed."
+/// is the `Skipping no-op state update` pulse on silent FS↔FS hops.
+/// `desktopArrival` is the `Will Force Update Rect` line, fired only
+/// on FS → Desktop swipes (not Desktop ↔ Desktop).
 enum DockSpaceEvent: Equatable {
     case fullScreenState(DockFullScreenState)
     case staySpaceChange
+    case desktopArrival
 }
 
 // MARK: - DockSpaceWatcher
@@ -57,14 +59,12 @@ enum DockSpaceEvent: Equatable {
 final class DockSpaceWatcher {
     // MARK: Configuration
 
-    /// Filters `dock-visibility` to `Space Forces Hidden:` (engage/exit
-    /// transitions; carries pid + fullscreen flag) and `Skipping no-op
-    /// state update` (Dock's wake-up on silent FS↔FS Space switches).
     private static let logPredicate = """
     subsystem == "com.apple.dock" \
     AND category == "dock-visibility" \
     AND (eventMessage CONTAINS "Space Forces Hidden:" \
-    OR eventMessage CONTAINS "Skipping no-op state update")
+    OR eventMessage CONTAINS "Skipping no-op state update" \
+    OR eventMessage CONTAINS "Will Force Update Rect")
     """
 
     static let statusPgrepPattern = #"log stream.*dock-visibility"#
@@ -159,12 +159,14 @@ final class DockSpaceWatcher {
                 )
             case .staySpaceChange:
                 Log.controller.debug("→ dock_rx stay_space_change")
+            case .desktopArrival:
+                Log.controller.debug("→ dock_rx desktop_arrival")
             }
             onUpdate(event)
         }
     }
 
-    /// Returns nil for lines that don't match either expected shape
+    /// Returns nil for lines that don't match any expected shape
     /// (`log stream` header, redacted output) — caller drops them.
     ///
     /// `Skipping no-op state update` is used only as a wake-up
@@ -177,6 +179,10 @@ final class DockSpaceWatcher {
     nonisolated static func parse(_ line: String) -> DockSpaceEvent? {
         if line.contains("Skipping no-op state update") {
             return .staySpaceChange
+        }
+
+        if line.contains("Will Force Update Rect") {
+            return .desktopArrival
         }
 
         let isFullScreen: Bool

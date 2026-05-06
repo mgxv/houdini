@@ -39,7 +39,7 @@ Set with `houdini mode <smart|fixed>`, then `brew services restart houdini` to a
   2. That app is the frontmost (focused) app.
   3. That same app is actively playing media via Now Playing.
 
-  When any becomes false, the menu bar comes back. The hotkey overrules the daemon's decision until the next signal change — see [Hotkey](#hotkey). For signal sources and the gate-by-gate diagram, see [Architecture](#architecture).
+  When any becomes false, the menu bar comes back. The hotkey overrules the daemon's decision until you swipe back to a Desktop space — see [Hotkey](#hotkey). For signal sources and the gate-by-gate diagram, see [Architecture](#architecture).
 
   </details>
 
@@ -98,7 +98,7 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 
 `⌃⌥⌘M` (Ctrl+Option+Cmd+M). Behavior depends on the active [mode](#modes).
 
-**In smart mode** — flips the bar against the daemon's current decision and pins that choice until the next real signal change (front-app switch, fullscreen transition, play/pause, etc.), at which point the daemon resumes automatic control. Press again to flip back. Useful for the rare moments when macOS is slow to tell houdini about a state change.
+**In smart mode** — flips the bar against the daemon's current decision and pins that choice until you swipe back to a Desktop space, at which point the daemon resumes automatic control. The pin survives front-app switches, FS↔FS hops, and play/pause. Press the hotkey again on the same FS Space to flip the pin back.
 
 **In fixed mode** — plain toggle: press hides, press again shows. If the hotkey doesn't toggle, check `houdini status` — the `hotkey:` field should read `registered`.
 
@@ -116,15 +116,15 @@ How smart mode works under the hood, how to inspect it, and how to debug it. Fix
 Run `houdini logs` and exercise the trigger you expect to hide the bar (fullscreen the app, start playback). Each evaluation prints a snapshot:
 
 ```
-→ hide  trig=adapter overrule=auto appMatch=process front_tx=Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=yes,fsPid=501]
-→ np_tx=WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=yes,title="BLACKPINK - 'GO' M/V"]
+→ hide  trig=adapter overrule=auto appMatch=process front_tx=com.apple.Safari[pid=501,name="Safari",bundle=com.apple.Safari,resp=null,fs=true,fsPid=501]
+→ np_tx=com.apple.WebKit.GPU[pid=506,bundle=com.apple.WebKit.GPU,parent=com.apple.Safari,resp=501,play=true,title="BLACKPINK - 'GO' M/V"]
 ```
 
 Field reference:
 
 - **`→ hide` / `→ show(reason)`** — first guard that tripped: `not_fullscreen`, `not_playing`, `no_front_pid`, `no_now_playing_pid`, `front_not_fs_owner`, `app_mismatch`.
 - **`trig=`** — input that fired this evaluation: `start`, `front_app`, `dock_fs`, `dock_stay`, `adapter`, `hotkey`.
-- **`overrule=`** — `auto` (daemon-driven), `force_hide`, or `force_show` (hotkey-pinned; auto-clears on the next signal change).
+- **`overrule=`** — `auto` (daemon-driven), `force_hide`, or `force_show` (hotkey-pinned; clears only on Desktop arrival).
 - **`appMatch=`** — `process`, `bundle`, `both`, `none`, or `n/a` (when a PID is missing) — which gate-6 path matched.
 - **`resp=`** — kernel's responsibility-resolved root PID; `null` for top-level apps, a PID for helpers (WebKit.GPU resolving to Safari). What the same-app process check actually compares.
 - **`title=`** on the np line is the Now Playing track title (diagnostic only — not a decision input).
@@ -133,11 +133,11 @@ Each input also leaves a debug breadcrumb at the boundary — `→ np_rx`, `→ 
 
 ##### Common reasons a `show` is logged when you expected `hide`
 
-- **`fs=no`** (`show(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
-- **`play=no`** (`show(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
+- **`fs=false`** (`show(not_fullscreen)`) — Dock has not reported a fullscreen Space transition. Native fullscreen (⌃⌘F, the green-stoplight button, or in-page fullscreen buttons) creates a dedicated Space; merely-maximized windows that just fill the screen don't qualify.
+- **`play=false`** (`show(not_playing)`) — the Now Playing source is paused; play/pause state comes directly from the media app.
 - **front `pid=null`** (`show(no_front_pid)`) — defensive; AppKit reported no frontmost application. Rare in practice (some Lock-Screen / login-window states).
 - **`np_tx=[pid=null,…]`** (`show(no_now_playing_pid)`) — nothing is using Now Playing. Some players (browser tabs without media-session metadata) never register with the system widget.
-- **`fs=yes` but `pid ≠ fsPid`** (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tabbed to a different app.
+- **`fs=true`** but `pid ≠ fsPid` (`show(front_not_fs_owner)`) — a fullscreen Space exists, but the frontmost app isn't its owner. Typically you've Cmd-Tabbed to a different app.
 - **front bundle ≠ np parent and `resp` doesn't match the front pid** (`show(app_mismatch)`) — e.g. Spotify is playing in the background while Safari is the focused fullscreen app.
 
 #### Is it actually running?
@@ -189,6 +189,7 @@ Subsystem `com.github.mgxv.houdini`, three categories:
 - **`controller`** — hide/show snapshots (info), per-input breadcrumbs (debug):
   - `→ dock_rx fs=… pid=… name=…` — parsed `Space Forces Hidden:` lines.
   - `→ dock_rx stay_space_change` — the FS↔FS hop pulse.
+  - `→ dock_rx desktop_arrival` — `Will Force Update Rect`, fired only on FS → Desktop arrival; clears any active hotkey pin.
   - `→ front_rx pid=… bundle=… name=…` — AppKit `didActivateApplicationNotification`.
   - `→ eval_skipped trig=…` — snapshot equal to the previous one.
 - **`adapter`** — `→ np_rx type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug).
@@ -261,7 +262,7 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
                          effectiveShouldHide
                       (overrule: hotkey pins
                       force_hide / force_show
-                      until next signal change;
+                      until next Desktop arrival;
                       auto otherwise)
                                    │
                                    ▼
@@ -276,6 +277,7 @@ Or open Console.app, filter on subsystem `com.github.mgxv.houdini`, and toggle *
 
 - `Space Forces Hidden:` — emitted on FS entry/exit; carries the active Space's fullscreen flag and owner PID.
 - `Skipping no-op state update` — emitted on FS↔FS Space switches; payload-less wake-up that lets us refresh the cached owner from `NSWorkspace.frontmostApplication`.
+- `Will Force Update Rect` — payload-less; emitted only on FS → Desktop swipes (not on Desktop ↔ Desktop hops).
 
 **Frontmost app and responsibility-PID — AppKit + private SPI.**
 
