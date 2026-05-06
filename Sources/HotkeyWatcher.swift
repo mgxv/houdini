@@ -1,6 +1,5 @@
 // Global hotkey via Carbon's RegisterEventHotKey. Consumes the chord
-// (vs. NSEvent global monitor, which doesn't) and works without AX
-// trust — useful on a fresh install before the user grants it.
+// (vs. NSEvent global monitor, which doesn't).
 //
 // Dispatch needs NSApp.run (see runForeground); registers on the
 // event dispatcher target so events bypass the application queue.

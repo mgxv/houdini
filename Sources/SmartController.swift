@@ -14,7 +14,6 @@ private enum EvalTrigger: String {
     case dockFs = "dock_fs"
     case dockStay = "dock_stay"
     case adapter
-    case window
     case hotkey
 }
 
@@ -25,75 +24,6 @@ enum Overrule: String {
     case auto
     case forceHide = "force_hide"
     case forceShow = "force_show"
-}
-
-/// Tab/window identity for `SmartController.overrideMap`. `axFocusedWindowTitle`
-/// is the focused window's normalized AX title — the per-tab
-/// signal, since browsers put the page name there. `appKitFrontBundle`
-/// guards against same-titled windows in different apps colliding.
-struct OverrideKey: Hashable {
-    let appKitFrontBundle: String
-    let axFocusedWindowTitle: String
-    let nowPlayingTitle: String?
-
-    init(
-        appKitFrontBundle: String,
-        axFocusedWindowTitle: String,
-        nowPlayingTitle: String? = nil,
-    ) {
-        self.appKitFrontBundle = appKitFrontBundle
-        self.axFocusedWindowTitle = axFocusedWindowTitle
-        self.nowPlayingTitle = nowPlayingTitle
-    }
-}
-
-extension OverrideKey {
-    func matchesByWindow(
-        appKitFrontBundle queryBundle: String,
-        axFocusedWindowTitle queryTitle: String?,
-    ) -> Bool {
-        guard let q = queryTitle, !q.isEmpty else { return false }
-        return appKitFrontBundle == queryBundle && axFocusedWindowTitle == q
-    }
-
-    /// nil/empty on either side returns false. The window-title
-    /// guard anchors the match to the playing window (same invariant
-    /// as gate 7) so the pin doesn't leak to other tabs in the same
-    /// browser while the original keeps NP active in the background.
-    func matchesByNowPlaying(
-        appKitFrontBundle queryBundle: String,
-        axFocusedWindowTitle queryWindowTitle: String?,
-        nowPlayingTitle queryTitle: String?,
-    ) -> Bool {
-        guard let stored = nowPlayingTitle, !stored.isEmpty else { return false }
-        guard let q = queryTitle, !q.isEmpty else { return false }
-        guard appKitFrontBundle == queryBundle, stored == q else { return false }
-        guard let win = queryWindowTitle, win.contains(q) else { return false }
-        return true
-    }
-
-    /// Same bundle + either title axis matching. Used at re-pin to
-    /// drop stale entries so contradictory pins can't coexist.
-    func overlaps(_ other: OverrideKey) -> Bool {
-        let windowMatch = matchesByWindow(
-            appKitFrontBundle: other.appKitFrontBundle,
-            axFocusedWindowTitle: other.axFocusedWindowTitle,
-        )
-        let nowPlayingMatch = matchesByNowPlaying(
-            appKitFrontBundle: other.appKitFrontBundle,
-            axFocusedWindowTitle: other.axFocusedWindowTitle,
-            nowPlayingTitle: other.nowPlayingTitle,
-        )
-        return windowMatch || nowPlayingMatch
-    }
-}
-
-/// Diagnostic only — surfaces in the log line whether a snapshot's
-/// overrule came from the per-tab map or the no-context fallback.
-private enum OverruleSource: Equatable {
-    case auto
-    case sticky
-    case global
 }
 
 // MARK: - SmartController
@@ -110,51 +40,21 @@ final class SmartController: NSObject {
     /// Field-name source key (where each input comes from):
     ///
     ///   `appKitFront*`         — AppKit `NSWorkspace.frontmostApplication`
-    ///   `axFocused*`           — Accessibility (`kAXTitleAttribute` /
-    ///                            `kAXFocusedWindow*`); `axFocusEpoch`
-    ///                            from `AXWatcher`
     ///   `dockFs.*`             — Dock log `Space Forces Hidden:` line
     ///                            (`com.apple.dock` / `dock-visibility`)
-    ///   `dockWindowTitle`      — `dockFs.dockWindowTitle` mirror, kept
-    ///                            on the snapshot for `dockWin=` log
-    ///                            fidelity
-    ///   `effectiveWindowTitle` — what gate 7 actually reads (AX or
-    ///                            Dock per `takeSnapshot`'s rule)
     ///   `nowPlaying*` / `isPlaying`
     ///                          — MediaRemote via mediaremote-adapter
     private struct Snapshot: Equatable {
         let appKitFrontPID: FrontmostPID?
         let appKitFrontName: String
         let appKitFrontBundle: String?
-        /// Raw AX probe result — always logged as `win=`.
-        let axFocusedWindowTitle: String?
-        /// Diagnostic only — splits a nil title into skipped / denied /
-        /// empty / ok in the log so it's debuggable beyond just "nil."
-        let axFocusedWindowProbeStatus: WindowTitleProbeStatus
-        /// `dockFs.dockWindowTitle` mirrored on the snapshot for log
-        /// fidelity (`dockWin=`).
-        let dockWindowTitle: String?
-        /// What gate 7 actually sees. Equals `axFocusedWindowTitle`
-        /// except on Dock-driven triggers (`.dockFs` / `.dockStay`)
-        /// with a non-empty `dockWindowTitle`, where Dock wins.
-        let effectiveWindowTitle: String?
         let dockFs: DockFullScreenState
         let isPlaying: Bool
         let nowPlayingPID: NowPlayingPID?
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
         let nowPlayingTitle: String?
-        /// Source: `AXWatcher.axFocusEpoch`. Lets `signalsEqual`
-        /// detect tab switches when the window title is stable
-        /// across them. Not consulted by `menuBarDecision` —
-        /// pure delta-detection signal. Excluded from
-        /// `decisionEqual` so a focus shift with no
-        /// decision-relevant change doesn't re-emit a snapshot.
-        var axFocusEpoch: UInt64
         var overrule: Overrule
-        /// Diagnostic only — `(sticky)` vs `(global)` in the log.
-        /// Excluded from both equality predicates.
-        var overruleSource: OverruleSource
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -162,10 +62,8 @@ final class SmartController: NSObject {
                 isPlaying: isPlaying,
                 appKitFrontPID: appKitFrontPID,
                 appKitFrontBundle: appKitFrontBundle,
-                axFocusedWindowTitle: effectiveWindowTitle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
-                nowPlayingTitle: nowPlayingTitle,
             )
         }
 
@@ -190,25 +88,11 @@ final class SmartController: NSObject {
 
         /// Equality ignoring `overrule` — distinguishes a real
         /// state change from a heartbeat so a no-op input can't
-        /// clear the `globalOverrule` fallback. The per-tab
-        /// `overrideMap` is never auto-cleared.
+        /// clear the active overrule.
         func signalsEqual(_ other: Snapshot) -> Bool {
             var copy = self
             copy.overrule = other.overrule
-            copy.overruleSource = other.overruleSource
             return copy == other
-        }
-
-        /// Equality on fields that drive the menu-bar output.
-        /// Layers on `signalsEqual` (which already excludes
-        /// `overrule` + `overruleSource`) and additionally
-        /// ignores `axFocusEpoch` — delta-detection only, bumping
-        /// it on every AX focus shift would re-emit a redundant
-        /// snapshot even though nothing user-visible changed.
-        func decisionEqual(_ other: Snapshot) -> Bool {
-            var copy = self
-            copy.axFocusEpoch = other.axFocusEpoch
-            return copy.signalsEqual(other)
         }
     }
 
@@ -222,16 +106,9 @@ final class SmartController: NSObject {
     private var nowPlayingParentBundle: String?
     private var nowPlayingTitle: String?
 
-    /// Per-tab pinned overrides. Sticky for the daemon's lifetime
-    /// — never auto-cleared, only replaced by a hotkey press in
-    /// the same context.
-    private var overrideMap: [OverrideKey: Overrule] = [:]
-
-    /// One-shot fallback used when no `OverrideKey` is computable
-    /// (AX denied, or focused window has no title). Auto-cleared
-    /// by the next real signal change so the hotkey still works
-    /// without AX permission.
-    private var globalOverrule: Overrule = .auto
+    /// Hotkey-driven override. Auto-clears on the next real signal
+    /// change so a stale pin doesn't outlive its context.
+    private var overrule: Overrule = .auto
 
     private var lastSnapshot: Snapshot?
 
@@ -239,25 +116,6 @@ final class SmartController: NSObject {
 
     private lazy var dockSpaceWatcher = DockSpaceWatcher { [weak self] event in
         self?.handleDockEvent(event)
-    }
-
-    /// AX events fire `evaluate(.window)` so within-app focus and
-    /// title changes (tab switches, page navigation) refresh the
-    /// window-title check without requiring a front-app change.
-    /// AX permission isn't load-bearing — when it isn't granted, the
-    /// watcher is a no-op and the daemon degrades to process-level
-    /// matching only.
-    ///
-    /// Each event is logged as `→ ax_rx` for diagnostics — useful
-    /// when the daemon's decision and the user's perception disagree
-    /// (e.g. background-tab webview activity firing focus events
-    /// against a non-visible window in Chrome).
-    private lazy var axWatcher = AXWatcher { [weak self] name, element in
-        guard let self else { return }
-        Log.controller.debug(
-            "→ \(Self.formatAXEvent(name: name, element: element), privacy: .public)",
-        )
-        evaluate(trigger: .window)
     }
 
     private lazy var hotkeyWatcher = HotkeyWatcher { [weak self] in
@@ -281,8 +139,6 @@ final class SmartController: NSObject {
             object: nil,
         )
         try dockSpaceWatcher.start()
-        axWatcher.attach(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
-        AccessibilityState.write(isAccessibilityTrusted() ? "granted" : "denied")
         HotkeyState.write(hotkeyWatcher.start() ? "registered" : "failed")
         evaluate(trigger: .start)
     }
@@ -291,10 +147,8 @@ final class SmartController: NSObject {
     /// termination handler doesn't `die` on graceful shutdown.
     func stop() {
         dockSpaceWatcher.stop()
-        axWatcher.detach()
         hotkeyWatcher.stop()
         HotkeyState.clear()
-        AccessibilityState.clear()
     }
 
     // MARK: - Input handlers
@@ -302,7 +156,6 @@ final class SmartController: NSObject {
     @objc private func onFrontAppChange(_: Notification) {
         let app = NSWorkspace.shared.frontmostApplication
         Log.controller.debug("→ \(Self.formatFrontChange(app), privacy: .public)")
-        axWatcher.attach(pid: app?.processIdentifier)
         // front_app fires ~30–60ms before dock_stay on FS↔FS hops.
         // Refresh fsOwnerPID so gate 5 doesn't trip on the prior
         // Space's cached owner; dock_stay then dedups.
@@ -350,157 +203,39 @@ final class SmartController: NSObject {
         evaluate(trigger: .dockStay)
     }
 
-    /// Drops `dockWindowTitle` when the FS app changes — stale title
-    /// from the prior Space would mis-trip gate 7 on `.dockStay`.
     private func refreshFSOwner(pid: pid_t) {
-        let newPID = FSOwnerPID(pid)
-        let preservedTitle = dockFs.fsOwnerPID == newPID ? dockFs.dockWindowTitle : nil
         dockFs = DockFullScreenState(
             isFullScreen: true,
-            fsOwnerPID: newPID,
-            dockWindowTitle: preservedTitle,
+            fsOwnerPID: FSOwnerPID(pid),
+            dockWindowTitle: dockFs.dockWindowTitle,
         )
     }
 
     // MARK: - Override handling
 
-    /// Flips the bar against its current effective state and pins
-    /// that choice under the current key. Falls through to
-    /// `globalOverrule` when no key is computable. Re-pinning
-    /// drops fuzzy-overlapping entries first so the map never
-    /// holds contradictory pins for the same logical surface.
+    /// Flips the bar against its current effective state. Auto-
+    /// clears on the next real signal change.
     private func toggleOverrule() {
-        let snap = takeSnapshot(trigger: .hotkey)
-        let next: Overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
-
-        if let key = overrideKey(
-            forBundle: snap.appKitFrontBundle,
-            axFocusedWindowTitle: snap.axFocusedWindowTitle,
-            nowPlayingTitle: snap.nowPlayingTitle,
-        ) {
-            overrideMap = overrideMap.filter { !$0.key.overlaps(key) }
-            overrideMap[key] = next
-            // Sticky takes priority; drop any stale fallback.
-            globalOverrule = .auto
-        } else {
-            globalOverrule = next
-        }
+        let snap = takeSnapshot()
+        overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
         evaluate(trigger: .hotkey)
-    }
-
-    /// nil when the focused window has no usable bundle id or AX
-    /// title — the caller falls through to `globalOverrule`.
-    private func overrideKey(
-        forBundle bundle: String?,
-        axFocusedWindowTitle: String?,
-        nowPlayingTitle: String?,
-    ) -> OverrideKey? {
-        guard let bundle = Self.nilIfEmpty(bundle) else { return nil }
-        guard let normalized = Self.normalizedKeyTitle(axFocusedWindowTitle) else { return nil }
-        return OverrideKey(
-            appKitFrontBundle: bundle,
-            axFocusedWindowTitle: normalized,
-            nowPlayingTitle: Self.nilIfEmpty(nowPlayingTitle),
-        )
-    }
-
-    /// Window-title match wins (precise tab); NP-title match is the
-    /// fallback (HBO-style episode roll). Two passes keep priority
-    /// deterministic regardless of dict iteration order. A missing
-    /// bundle id skips the map scan and routes through
-    /// `globalOverrule` — same path as a missing window title.
-    private func resolveOverrule(
-        appKitFrontBundle: String?,
-        axFocusedWindowTitle: String?,
-        nowPlayingTitle: String?,
-    ) -> (Overrule, OverruleSource) {
-        if let bundle = Self.nilIfEmpty(appKitFrontBundle) {
-            let win = Self.normalizedKeyTitle(axFocusedWindowTitle)
-            let np = Self.nilIfEmpty(nowPlayingTitle)
-
-            for (key, overrule) in overrideMap
-                where key.matchesByWindow(appKitFrontBundle: bundle, axFocusedWindowTitle: win)
-            {
-                return (overrule, .sticky)
-            }
-            for (key, overrule) in overrideMap
-                where key.matchesByNowPlaying(
-                    appKitFrontBundle: bundle,
-                    axFocusedWindowTitle: win,
-                    nowPlayingTitle: np,
-                )
-            {
-                return (overrule, .sticky)
-            }
-        }
-        if globalOverrule != .auto {
-            return (globalOverrule, .global)
-        }
-        return (.auto, .auto)
-    }
-
-    /// `normalizeWindowTitle` + drop empty. nil/empty in → nil out.
-    private static func normalizedKeyTitle(_ raw: String?) -> String? {
-        guard let raw, !raw.isEmpty else { return nil }
-        let n = normalizeWindowTitle(raw)
-        return n.isEmpty ? nil : n
-    }
-
-    private static func nilIfEmpty(_ s: String?) -> String? {
-        (s?.isEmpty == false) ? s : nil
     }
 
     // MARK: - Evaluation core
 
     /// Single point of integration — every input channel funnels
-    /// here. Builds a fresh snapshot, decides whether to clear the
-    /// no-context fallback, dedups against the prior snapshot, and
-    /// applies the resulting hide/show to the menu bar. The
-    /// `trigger` is preserved through to the log line so a
+    /// here. The `trigger` is preserved through to the log line so a
     /// surprising decision can be traced back to its input.
     private func evaluate(trigger: EvalTrigger) {
-        var snap = takeSnapshot(trigger: trigger)
+        var snap = takeSnapshot()
 
-        // AX fires on every focus move; the focused window's title
-        // often reads nil for ~50–500ms during normal interaction.
-        // Suppress AX nil-title evals so the bar doesn't flicker on
-        // every keystroke / focus shift. Non-AX triggers (front_app,
-        // dock_fs, dock_stay, adapter, start) still go through with
-        // nil so legitimate app/state changes aren't lost. When an
-        // overrule is active we also let AX through — the axFocusEpoch
-        // bump on a real focus change is the signal that clears the
-        // global fallback.
-        if trigger == .window, snap.axFocusedWindowTitle == nil, snap.overrule == .auto {
-            Log.controller.debug(
-                "→ eval_skipped_no_window trig=\(trigger.rawValue, privacy: .public)",
-            )
-            return
-        }
-
-        // Auto-clear the one-shot fallback on real state changes.
-        // The per-tab `overrideMap` is intentionally sticky.
         let signalsChanged = lastSnapshot.map { !snap.signalsEqual($0) } ?? true
-        if trigger != .hotkey, signalsChanged, globalOverrule != .auto {
-            globalOverrule = .auto
-            let (resolved, source) = resolveOverrule(
-                appKitFrontBundle: snap.appKitFrontBundle,
-                axFocusedWindowTitle: snap.axFocusedWindowTitle,
-                nowPlayingTitle: snap.nowPlayingTitle,
-            )
-            snap.overrule = resolved
-            snap.overruleSource = source
+        if trigger != .hotkey, signalsChanged, overrule != .auto {
+            overrule = .auto
+            snap.overrule = .auto
         }
 
-        // Dedup the apply + log on decision-relevant fields only.
-        // A focus-only delta (axFocusEpoch bumped, nothing else
-        // changed, overrule stable) refreshes lastSnapshot's epoch
-        // so the next signalsEqual is comparable, but doesn't
-        // re-emit a snapshot line for state the user already saw.
-        if let last = lastSnapshot,
-           snap.decisionEqual(last),
-           snap.overrule == last.overrule
-        {
-            lastSnapshot = snap
+        if let last = lastSnapshot, snap == last {
             Log.controller.debug(
                 "→ eval_skipped trig=\(trigger.rawValue, privacy: .public)",
             )
@@ -512,77 +247,31 @@ final class SmartController: NSObject {
         logSnapshot(snap, trigger: trigger)
     }
 
-    /// Captures a consistent snapshot of every input the decision
-    /// reads, plus `axFocusEpoch` (so `signalsEqual` can spot tab
-    /// switches) and the resolved overrule for this snapshot's
-    /// context. Pure function of `SmartController`'s cached state plus
-    /// a single fresh AX/CG probe — never mutates anything.
-    ///
-    /// `trigger` is consumed only by the Dock-priority rule below.
-    private func takeSnapshot(trigger: EvalTrigger) -> Snapshot {
+    /// Pure function of `SmartController`'s cached state — never mutates.
+    private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let appKitFrontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
         let appKitFrontName = frontApp?.localizedName ?? "(unknown)"
         let appKitFrontBundle = frontApp?.bundleIdentifier
-        // Probe whenever a FS frontmost app exists. Can't gate on
-        // `isPlaying` — the title is also `signalsEqual`'s delta
-        // signal for tab-switch overrule clearing. Gate 1
-        // (not_fullscreen) still avoids the probe in the common
-        // non-FS case.
-        let needsTitle = dockFs.isFullScreen && appKitFrontPID != nil
-        let probe: WindowTitleProbe = needsTitle
-            ? visibleWindowTitle(for: frontApp?.processIdentifier)
-            : .skipped
-        let axFocusedWindowTitle: String? = probe.status == .empty ? "" : probe.title
-
-        // On Dock-driven triggers, prioritize Dock's tile-name over
-        // AX — Dock captures the title atomically with the FS state,
-        // and AX often races empty mid-Space-hop. `.denied` /
-        // `.ax_failed` keep the documented lenient-hide path.
-        let dockWindowTitle = dockFs.dockWindowTitle
-        let effectiveWindowTitle: String? = {
-            if trigger == .dockFs || trigger == .dockStay,
-               probe.status != .denied,
-               probe.status != .axFailed,
-               let dt = dockWindowTitle, !dt.isEmpty
-            {
-                return dt
-            }
-            return axFocusedWindowTitle
-        }()
-
-        // Override key uses the raw AX title — the dock cache is a
-        // transient-state escape hatch, not a window identity.
-        let (resolvedOverrule, overruleSource) = resolveOverrule(
-            appKitFrontBundle: appKitFrontBundle,
-            axFocusedWindowTitle: axFocusedWindowTitle,
-            nowPlayingTitle: nowPlayingTitle,
-        )
 
         return Snapshot(
             appKitFrontPID: appKitFrontPID,
             appKitFrontName: appKitFrontName,
             appKitFrontBundle: appKitFrontBundle,
-            axFocusedWindowTitle: axFocusedWindowTitle,
-            axFocusedWindowProbeStatus: probe.status,
-            dockWindowTitle: dockWindowTitle,
-            effectiveWindowTitle: effectiveWindowTitle,
             dockFs: dockFs,
             isPlaying: isPlaying,
             nowPlayingPID: nowPlayingPID,
             nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
             nowPlayingTitle: nowPlayingTitle,
-            axFocusEpoch: axWatcher.axFocusEpoch,
-            overrule: resolvedOverrule,
-            overruleSource: overruleSource,
+            overrule: overrule,
         )
     }
 
     /// Two scannable lines for the unified log:
     ///
     ///   → {hide|show(reason)|hide(force_hide)|show(force_show)}
-    ///       trig=<src>  overrule=<auto|force_…[(sticky|global)]>
+    ///       trig=<src>  overrule=<auto|force_…>
     ///       appMatch=<…>  front_tx=<head>[…]
     ///   → np_tx=<head>[…]
     ///
@@ -603,7 +292,7 @@ final class SmartController: NSObject {
     private static func formatSnapshotHead(_ snap: Snapshot, trigger: EvalTrigger) -> String {
         let tag = snap.effectiveTag
         let trig = trigger.rawValue
-        let overrule = formatOverrule(snap.overrule, source: snap.overruleSource)
+        let overrule = snap.overrule.rawValue
         return """
         \(tag)  trig=\(trig) overrule=\(overrule) \
         appMatch=\(formatAppMatch(snap)) front_tx=\(formatFront(snap))
@@ -614,21 +303,7 @@ final class SmartController: NSObject {
         "np_tx=\(formatNowPlaying(snap))"
     }
 
-    /// `auto` / `force_hide(sticky)` / `force_show(global)` etc.
-    /// — distinguishes per-tab from one-shot in the log.
-    private static func formatOverrule(_ overrule: Overrule, source: OverruleSource) -> String {
-        switch overrule {
-        case .auto: "auto"
-        case .forceHide, .forceShow:
-            switch source {
-            case .auto: overrule.rawValue
-            case .sticky: "\(overrule.rawValue)(sticky)"
-            case .global: "\(overrule.rawValue)(global)"
-            }
-        }
-    }
-
-    /// Which gate-7 path matched (process / bundle / both / none) —
+    /// Which gate-6 path matched (process / bundle / both / none) —
     /// `n/a` if a pid was missing. Diagnostic, computed alongside the
     /// decision rather than returned from it.
     private static func formatAppMatch(_ snap: Snapshot) -> String {
@@ -656,10 +331,7 @@ final class SmartController: NSObject {
         let resp = formatNullable(snap.appKitFrontPID?.responsiblePID)
         let fs = snap.dockFs.isFullScreen ? "yes" : "no"
         let fsPid = formatNullable(snap.dockFs.fsOwnerPID?.rawValue)
-        let win = formatNullableString(snap.axFocusedWindowTitle)
-        let probe = snap.axFocusedWindowProbeStatus.rawValue
-        let dockWin = formatNullableString(snap.dockWindowTitle)
-        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid),win=\(win),probe=\(probe),dockWin=\(dockWin)]"
+        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
@@ -680,17 +352,6 @@ final class SmartController: NSObject {
         let bundle = formatNullableString(app?.bundleIdentifier)
         let name = quoted(app?.localizedName ?? "(unknown)")
         return "front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
-    }
-
-    /// One line per AX notification, with the focused element's
-    /// containing window title surfaced — lets you correlate a
-    /// hide/show decision to the AX event that triggered it.
-    private static func formatAXEvent(name: String, element: AXUIElement) -> String {
-        let app = NSWorkspace.shared.frontmostApplication
-        let pid = formatNullable(app?.processIdentifier)
-        let appName = quotedNullable(app?.localizedName)
-        let title = formatNullableString(axFocusedWindowTitle(forElement: element))
-        return "ax_rx name=\(name) app=\(appName) pid=\(pid) window=\(title)"
     }
 
     // MARK: - Log formatting — string utilities
@@ -730,10 +391,6 @@ final class SmartController: NSObject {
     /// contain spaces, parens, or LTR markers. Embedded `"` is escaped.
     private static func quoted(_ value: String) -> String {
         "\"\(escapeQuotes(value))\""
-    }
-
-    private static func quotedNullable(_ value: String?) -> String {
-        value.map { quoted($0) } ?? "null"
     }
 
     private static func escapeQuotes(_ value: String) -> String {

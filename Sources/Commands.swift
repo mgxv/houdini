@@ -130,7 +130,6 @@ func runStatus() -> Never {
     let adapterAlive = subprocessAlive(matching: AdapterClient.statusPgrepPattern)
     let dockLogAlive = subprocessAlive(matching: DockSpaceWatcher.statusPgrepPattern)
     let hotkeyState = daemonRunning ? (HotkeyState.read() ?? "unknown") : "n/a"
-    let axState = daemonRunning ? (AccessibilityState.read() ?? "unknown") : "n/a"
     print("version:        \(version)")
     print("mode:           \(mode.rawValue)")
     print("daemon:         \(daemonRunning ? "running" : "not running")")
@@ -143,7 +142,6 @@ func runStatus() -> Never {
         print("dock log:       n/a (fixed mode)")
     }
     print("hotkey:         \(hotkeyState)")
-    print("accessibility:  \(axState)")
     let healthy: Bool = switch mode {
     case .smart: daemonRunning && adapterAlive && dockLogAlive
     case .fixed: daemonRunning && hotkeyState == "registered"
@@ -257,15 +255,13 @@ func usage() {
                                 Read the current mode with `houdini status`.
       houdini status            Print version, mode, daemon state,
                                 subprocess health (smart mode only),
-                                hotkey registration, and Accessibility
-                                permission. Exits non-zero if required
-                                components for the active mode aren't
-                                running.
+                                and hotkey registration. Exits non-zero
+                                if required components for the active
+                                mode aren't running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility
-                                events, AX focus events,
-                                mediaremote-adapter output, etc.
+                                events, mediaremote-adapter output, etc.
       houdini version           Print version
       houdini help              Print this help
 

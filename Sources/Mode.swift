@@ -9,7 +9,7 @@ enum Mode: String {
     case fixed
 }
 
-/// On-disk persistence mirroring `HotkeyState` / `AccessibilityState`.
+/// On-disk persistence mirroring `HotkeyState`.
 /// Default is `.smart` when the file is missing or malformed.
 enum ModeState {
     private static func url() -> URL? {

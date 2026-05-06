@@ -25,26 +25,13 @@ class Houdini < Formula
 
   def caveats
     <<~EOS
-      Accessibility permission
-      ---------------------------------------------------------------
-      First start prompts for Accessibility — distinguishes two
-      windows of the same app (e.g. the playing Chrome tab vs. a
-      different fullscreen Chrome window). Without it, the daemon
-      falls back to process-level matching only.
-
-      If you dismiss the prompt, revoke it, or run `brew upgrade`
-      (macOS treats the freshly-signed binary as a new identity),
-      restart to re-prompt:
-
-          brew services restart houdini
-
       Manual override
       ---------------------------------------------------------------
-      ⌃⌥⌘M flips the menu bar against the daemon's decision —
-      sticky to the tab/window where you set it. See the README
-      for matching rules and edge cases:
+      ⌃⌥⌘M flips the menu bar against the daemon's decision until
+      the next signal change. See the README for behavior and
+      mode differences:
 
-          https://github.com/mgxv/houdini#manual-override
+          https://github.com/mgxv/houdini#hotkey
     EOS
   end
 
