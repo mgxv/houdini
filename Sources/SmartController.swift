@@ -204,12 +204,10 @@ final class SmartController: NSObject {
     }
 
     private func refreshFSOwner(pid: pid_t) {
-        let newPID = FSOwnerPID(pid)
-        let preservedTitle = dockFs.fsOwnerPID == newPID ? dockFs.dockWindowTitle : nil
         dockFs = DockFullScreenState(
             isFullScreen: true,
-            fsOwnerPID: newPID,
-            dockWindowTitle: preservedTitle,
+            fsOwnerPID: FSOwnerPID(pid),
+            dockWindowTitle: dockFs.dockWindowTitle,
         )
     }
 
@@ -226,22 +224,17 @@ final class SmartController: NSObject {
     // MARK: - Evaluation core
 
     /// Single point of integration — every input channel funnels
-    /// here. Builds a fresh snapshot, decides whether to clear the
-    /// active overrule, dedups against the prior snapshot, and
-    /// applies the resulting hide/show to the menu bar. The
-    /// `trigger` is preserved through to the log line so a
+    /// here. The `trigger` is preserved through to the log line so a
     /// surprising decision can be traced back to its input.
     private func evaluate(trigger: EvalTrigger) {
         var snap = takeSnapshot()
 
-        // Auto-clear the overrule on real state changes.
         let signalsChanged = lastSnapshot.map { !snap.signalsEqual($0) } ?? true
         if trigger != .hotkey, signalsChanged, overrule != .auto {
             overrule = .auto
             snap.overrule = .auto
         }
 
-        // Dedup the apply + log on full equality.
         if let last = lastSnapshot, snap == last {
             Log.controller.debug(
                 "→ eval_skipped trig=\(trigger.rawValue, privacy: .public)",
@@ -254,9 +247,7 @@ final class SmartController: NSObject {
         logSnapshot(snap, trigger: trigger)
     }
 
-    /// Captures a consistent snapshot of every input the decision
-    /// reads. Pure function of `SmartController`'s cached state —
-    /// never mutates anything.
+    /// Pure function of `SmartController`'s cached state — never mutates.
     private func takeSnapshot() -> Snapshot {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let appKitFrontPID = frontApp.map { FrontmostPID($0.processIdentifier) }

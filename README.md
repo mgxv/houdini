@@ -187,7 +187,7 @@ For the live decision (frontmost app, Now Playing, hide/show), watch `houdini lo
 Subsystem `com.github.mgxv.houdini`, three categories:
 
 - **`controller`** — hide/show snapshots (info), per-input breadcrumbs (debug):
-  - `→ dock_rx fs=… pid=…` — parsed `Space Forces Hidden:` lines.
+  - `→ dock_rx fs=… pid=… name=…` — parsed `Space Forces Hidden:` lines.
   - `→ dock_rx stay_space_change` — the FS↔FS hop pulse.
   - `→ front_rx pid=… bundle=… name=…` — AppKit `didActivateApplicationNotification`.
   - `→ eval_skipped trig=…` — snapshot equal to the previous one.
