@@ -1,10 +1,6 @@
 // Subscribes to Dock's `dock-visibility` log channel as our source
-// of fullscreen-Space state. We use Dock's log instead of querying
-// Accessibility because on macOS 15+ AX notifications are flaky
-// during FS animations and `AXFullScreen` is set asynchronously by
-// the app — sometimes hundreds of ms after Dock declares the
-// animation complete. Reading from Dock's log eliminates the race
-// because Dock emits at decision time.
+// of fullscreen-Space state. Dock emits at decision time, which is
+// the most reliable signal we can read without entitlements.
 //
 // `log stream` is a public, documented command — no entitlements
 // required.
@@ -20,8 +16,7 @@ import Foundation
 /// a non-FS Space).
 ///
 /// `dockWindowTitle` is the FS-tile's `name=` field, captured at
-/// FS-entry. Takes priority over the AX probe for gate 7 on
-/// `.dockFs` evaluations; nil on FS-exit / stay pulses.
+/// FS-entry; nil on FS-exit / stay pulses.
 struct DockFullScreenState: Equatable {
     let isFullScreen: Bool
     let fsOwnerPID: FSOwnerPID?

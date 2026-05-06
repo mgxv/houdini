@@ -1,4 +1,4 @@
-// Pin the seven-gate decision policy. Every test starts from a
+// Pin the six-gate decision policy. Every test starts from a
 // "happy path" Inputs whose decision is .hide, mutates one field,
 // and asserts the resulting outcome — so each test exercises one
 // specific gate's pass/fail boundary.
@@ -13,10 +13,8 @@ struct MenuBarDecisionTests {
         var isPlaying = true
         var appKitFrontPID: FrontmostPID? = .init(100)
         var appKitFrontBundle: String? = "com.example.App"
-        var axFocusedWindowTitle: String? = "Track X — App"
         var nowPlayingPID: NowPlayingPID? = .init(100)
         var nowPlayingParentBundle: String? = "com.example.App"
-        var nowPlayingTitle: String? = "Track X"
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -24,10 +22,8 @@ struct MenuBarDecisionTests {
                 isPlaying: isPlaying,
                 appKitFrontPID: appKitFrontPID,
                 appKitFrontBundle: appKitFrontBundle,
-                axFocusedWindowTitle: axFocusedWindowTitle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
-                nowPlayingTitle: nowPlayingTitle,
             )
         }
     }
@@ -152,71 +148,6 @@ struct MenuBarDecisionTests {
         i.appKitFrontBundle = ""
         i.nowPlayingParentBundle = ""
         #expect(i.decision == .showAppMismatch)
-    }
-
-    // MARK: - Gate 7: window-title refinement
-
-    @Test("Gate 7: title contains NP title → hide")
-    func gate7TitleContains() {
-        var i = Inputs()
-        i.axFocusedWindowTitle = "Track X — YouTube — Google Chrome"
-        i.nowPlayingTitle = "Track X"
-        #expect(i.decision == .hide)
-    }
-
-    @Test("Gate 7: title doesn't contain NP title → show(window_mismatch)")
-    func gate7TitleMismatch() {
-        var i = Inputs()
-        i.axFocusedWindowTitle = "Settings — Google Chrome"
-        i.nowPlayingTitle = "Track X"
-        #expect(i.decision == .showWindowMismatch)
-    }
-
-    @Test("Gate 7: case-sensitive (intentional)")
-    func gate7CaseSensitive() {
-        var i = Inputs()
-        i.axFocusedWindowTitle = "TRACK X — App"
-        i.nowPlayingTitle = "Track X"
-        #expect(i.decision == .showWindowMismatch)
-    }
-
-    @Test("Gate 7: nil window title is lenient → hide")
-    func gate7NilWindowTitleLenient() {
-        var i = Inputs()
-        i.axFocusedWindowTitle = nil
-        #expect(i.decision == .hide)
-    }
-
-    @Test("Gate 7: empty window title (probe-confirmed) → show(window_mismatch)")
-    func gate7EmptyWindowTitleStrict() {
-        var i = Inputs()
-        i.axFocusedWindowTitle = ""
-        #expect(i.decision == .showWindowMismatch)
-    }
-
-    @Test("Gate 7: nil NP title is lenient → hide")
-    func gate7NilNowPlayingTitleLenient() {
-        var i = Inputs()
-        i.nowPlayingTitle = nil
-        #expect(i.decision == .hide)
-    }
-
-    @Test("Gate 7: empty NP title is lenient → hide")
-    func gate7EmptyNowPlayingTitleLenient() {
-        var i = Inputs()
-        i.nowPlayingTitle = ""
-        #expect(i.decision == .hide)
-    }
-
-    @Test("Gate 7: NP title contains window title → hide (reverse-substring lenient)")
-    func gate7ReverseSubstring() {
-        // Native-player shape: window is the bare track name; NP carries
-        // the longer "track — artist" form. Either-direction substring
-        // match should still hide.
-        var i = Inputs()
-        i.axFocusedWindowTitle = "Bohemian Rhapsody"
-        i.nowPlayingTitle = "Bohemian Rhapsody — Queen"
-        #expect(i.decision == .hide)
     }
 
     // MARK: - Ordering

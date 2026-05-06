@@ -1,8 +1,8 @@
-// The seven-gate decision that drives the menu bar. Pure function
-// of (Dock fullscreen state, Now Playing state, frontmost app,
-// focused-window title) returning `hide` or `show(reason)`. Pinned
-// by `MenuBarDecisionTests`; SmartController composes the inputs and
-// applies the verdict, but the gates themselves live here.
+// The six-gate decision that drives the menu bar. Pure function
+// of (Dock fullscreen state, Now Playing state, frontmost app)
+// returning `hide` or `show(reason)`. Pinned by `MenuBarDecisionTests`;
+// SmartController composes the inputs and applies the verdict, but
+// the gates themselves live here.
 
 import Foundation
 
@@ -14,7 +14,6 @@ enum MenuBarDecision {
     case showNoNowPlayingPid
     case showFrontNotFsOwner
     case showAppMismatch
-    case showWindowMismatch
 
     var shouldHide: Bool {
         if case .hide = self { return true }
@@ -34,7 +33,6 @@ enum MenuBarDecision {
         case .showNoNowPlayingPid: "show(no_now_playing_pid)"
         case .showFrontNotFsOwner: "show(front_not_fs_owner)"
         case .showAppMismatch: "show(app_mismatch)"
-        case .showWindowMismatch: "show(window_mismatch)"
         }
     }
 }
@@ -47,10 +45,8 @@ func menuBarDecision(
     isPlaying: Bool,
     appKitFrontPID: FrontmostPID?,
     appKitFrontBundle: String?,
-    axFocusedWindowTitle: String?,
     nowPlayingPID: NowPlayingPID?,
     nowPlayingParentBundle: String?,
-    nowPlayingTitle: String?,
 ) -> MenuBarDecision {
     // 1 — fullscreen Space is active. Outside fullscreen the OS
     // shows the menu bar via its own auto-hide pref; the rest of
@@ -83,13 +79,6 @@ func menuBarDecision(
         nowPlayingParentBundle: nowPlayingParentBundle,
     ) else { return .showAppMismatch }
 
-    // 7 — focused window's title and the Now Playing track refer to
-    // the same media (bidirectional substring).
-    guard titleMatchesNowPlaying(
-        winTitle: axFocusedWindowTitle,
-        npTitle: nowPlayingTitle,
-    ) else { return .showWindowMismatch }
-
     return .hide
 }
 
@@ -114,27 +103,4 @@ private func isSameAppAsNowPlaying(
     if let parent = nowPlayingParentBundle, !parent.isEmpty,
        parent == appKitFrontBundle { return true }
     return false
-}
-
-/// Gate 7 — bidirectional case-sensitive substring between the
-/// focused window's title and the Now Playing track. Either
-/// direction is accepted: `winTitle ⊇ npTitle` for the common
-/// "two FS Chrome windows, only one playing" case that gate 6
-/// alone can't refute, plus `npTitle ⊇ winTitle` for native
-/// players whose window title is a shorter form of the NP string
-/// (e.g. window=`"Bohemian Rhapsody"`, NP=`"Bohemian Rhapsody — Queen"`).
-///
-/// Polarities:
-///   nil/empty NP        — no track to match against → lenient hide.
-///   nil window          — AX unknown → lenient hide.
-///   probe-confirmed ""  — strict show(window_mismatch).
-///
-/// The explicit `!winTitle.isEmpty` is what enforces the strict-
-/// empty path: Swift's `String.contains("")` returns true, which
-/// would otherwise let the reverse direction silently hide.
-private func titleMatchesNowPlaying(winTitle: String?, npTitle: String?) -> Bool {
-    guard let npTitle, !npTitle.isEmpty else { return true }
-    guard let winTitle else { return true }
-    guard !winTitle.isEmpty else { return false }
-    return winTitle.contains(npTitle) || npTitle.contains(winTitle)
 }

@@ -1,5 +1,5 @@
-// Fixed-mode runtime: hotkey toggles the menu bar. No Dock log,
-// AX, or MediaRemote subscriptions — those live in `SmartController`.
+// Fixed-mode runtime: hotkey toggles the menu bar. No Dock log
+// or MediaRemote subscriptions — those live in `SmartController`.
 // Toggle state is not persisted across restarts.
 
 import Foundation
@@ -17,17 +17,13 @@ final class FixedController {
         self.menuBar = menuBar
     }
 
-    /// Writes `HotkeyState` + `AccessibilityState` so `houdini status`
-    /// reports the same fields as smart mode. AX is informational only.
     func start() {
-        AccessibilityState.write(isAccessibilityTrusted() ? "granted" : "denied")
         HotkeyState.write(hotkeyWatcher.start() ? "registered" : "failed")
     }
 
     func stop() {
         hotkeyWatcher.stop()
         HotkeyState.clear()
-        AccessibilityState.clear()
     }
 
     private func toggle() {
