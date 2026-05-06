@@ -68,6 +68,11 @@ struct DockSpaceWatcherTests {
         #expect(DockSpaceWatcher.parse(line) == .staySpaceChange)
     }
 
+    @Test("Will Force Update Rect: maps to .desktopArrival")
+    func desktopArrival() {
+        #expect(DockSpaceWatcher.parse("Will Force Update Rect") == .desktopArrival)
+    }
+
     @Test("Unrelated lines: return nil")
     func unrelatedLinesReturnNil() {
         #expect(DockSpaceWatcher.parse("Dock: Visible") == nil)
