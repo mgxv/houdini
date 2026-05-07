@@ -1,10 +1,7 @@
 name: macOS-latest weekly
 
-# Early-warning canary against macOS upgrade regressions in the
-# scrapers we depend on (Dock's `dock-visibility` log channel,
-# MediaRemote framework). Runs `swift test` on `macos-latest`
-# weekly. Failure here is a heads-up, not a release gate — the
-# main `ci.yml` job (pinned to macos-15) is the merge gate.
+# Weekly canary on macos-latest. Heads-up only, not a release gate
+# (main ci.yml on macos-15 is the merge gate).
 
 on:
   schedule:

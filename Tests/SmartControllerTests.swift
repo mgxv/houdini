@@ -1,6 +1,5 @@
-// Drives SmartController via a recording MenuBarToggler and a mock
-// FrontmostAppProvider so all paths — including gates 5 and 6,
-// which depend on frontmost-app identity — are deterministic.
+// Drives SmartController with a recording MenuBarToggler and a mock
+// FrontmostAppProvider for deterministic gate coverage.
 
 @testable import houdini
 import Testing
@@ -145,7 +144,6 @@ struct SmartControllerTests {
 
         controller.updateMedia(Self.playing(pid: 200, parentBundle: "com.example.player"))
 
-        // dockFs.isFullScreen=false → .showNotFullScreen → apply(false, false).
         #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: false)])
     }
 
@@ -153,9 +151,8 @@ struct SmartControllerTests {
 
     @Test("Gate 5: frontmost ≠ FS-owner → show(front_not_fs_owner)")
     func gate5FrontNotFsOwner() {
-        // Frontmost pid 200; FS owner pid 100. Untracked test pids
-        // make responsibility-pid resolution return 0, so isSameApp
-        // correctly returns false and gate 5 trips.
+        // Untracked test pids make responsibility-pid resolution
+        // return 0, so isSameApp correctly returns false.
         let (controller, bar, _) = Self.makeController(
             frontmost: FrontmostInfo(pid: 200, name: "Other", bundle: "com.other.App"),
         )
@@ -164,7 +161,6 @@ struct SmartControllerTests {
 
         controller.handleDockEvent(Self.fsEntry100)
 
-        // Effective is .show → apply(false, true).
         #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: true)])
     }
 
@@ -172,9 +168,6 @@ struct SmartControllerTests {
 
     @Test("Gate 6: process AND bundle mismatch → show(app_mismatch)")
     func gate6AppMismatch() {
-        // Frontmost = (pid 200, bundle com.front.App) owns the FS Space (pid 200).
-        // Now Playing = (pid 300, parent com.np.App). Gate 5 passes (200==200);
-        // gate 6 trips because process and bundle both differ.
         let (controller, bar, _) = Self.makeController(
             frontmost: FrontmostInfo(pid: 200, name: "Front", bundle: "com.front.App"),
         )
@@ -190,9 +183,6 @@ struct SmartControllerTests {
 
     @Test("Gate 6: bundle match passes when process mismatches → hide")
     func gate6BundleMatchHides() {
-        // Frontmost (pid 200, bundle com.same.App) owns FS (pid 200).
-        // Now Playing (pid 300, parent com.same.App). Process check fails
-        // (200 vs 300, both untracked → false), but bundle check passes.
         let (controller, bar, _) = Self.makeController(
             frontmost: FrontmostInfo(pid: 200, name: "App", bundle: "com.same.App"),
         )
@@ -203,7 +193,6 @@ struct SmartControllerTests {
             DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(200)),
         ))
 
-        // All six gates pass → .hide → apply(true, true).
         #expect(bar.calls == [.apply(shouldHide: true, isFullScreen: true)])
     }
 
@@ -218,17 +207,14 @@ struct SmartControllerTests {
         controller.handleDockEvent(.fullScreenState(
             DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(200)),
         ))
-        // At this point gates pass → bar hidden.
         #expect(bar.calls.last == .apply(shouldHide: true, isFullScreen: true))
         bar.calls.removeAll()
 
-        // User Cmd-Tabs to a different app whose bundle doesn't match.
         provider.frontmostApp = FrontmostInfo(
             pid: 999, name: "Other", bundle: "com.other.App",
         )
         controller.handleFrontAppChange()
 
-        // Gate 5 now trips (999 ≠ 200, untracked) → .show → apply(false, true).
         #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: true)])
     }
 }

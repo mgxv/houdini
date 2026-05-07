@@ -1,12 +1,8 @@
-// Read-only seam for "who is the frontmost app right now?" — lets
-// SmartController consume `NSWorkspace.shared.frontmostApplication`
-// in production and a controllable mock in tests.
+// Read-only seam for the frontmost app — `NSWorkspace` in production,
+// mockable in tests.
 
 import AppKit
 
-/// Plain snapshot of the AppKit frontmost app's identifying fields.
-/// Decoupled from `NSRunningApplication` so tests don't need to
-/// construct one to drive the controller.
 struct FrontmostInfo: Equatable {
     let pid: pid_t
     let name: String?
