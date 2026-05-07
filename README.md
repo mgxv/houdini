@@ -98,7 +98,7 @@ Running the binary directly (`./houdini`) is useful for debugging; `brew service
 
 `⌃⌥⌘M` (Ctrl+Option+Cmd+M). Behavior depends on the active [mode](#modes).
 
-**In smart mode** — flips the bar against the daemon's current decision and pins that choice until you swipe back to a Desktop space, at which point the daemon resumes automatic control. The pin survives front-app switches, FS↔FS hops, and play/pause. Press the hotkey again on the same FS Space to flip the pin back.
+**In smart mode** — flips the bar against the daemon's current decision and pins that choice until you swipe back to a Desktop space, at which point the daemon resumes automatic control. The pin survives front-app switches, FS↔FS hops, and play/pause. Press the hotkey again on the same FS Space to flip the pin back. Pressing on a Desktop space is a no-op (the underlying pref is fullscreen-only); a `→ hotkey ignored (not in fullscreen)` line is logged.
 
 **In fixed mode** — plain toggle: press hides, press again shows. If the hotkey doesn't toggle, check `houdini status` — the `hotkey:` field should read `registered`.
 
@@ -192,6 +192,7 @@ Subsystem `com.github.mgxv.houdini`, three categories:
   - `→ dock_rx desktop_arrival` — `Will Force Update Rect`, fired only on FS → Desktop arrival; clears any active hotkey pin.
   - `→ front_rx pid=… bundle=… name=…` — AppKit `didActivateApplicationNotification`.
   - `→ eval_skipped trig=…` — snapshot equal to the previous one.
+  - `→ hotkey ignored (not in fullscreen)` — hotkey press refused on Desktop.
 - **`adapter`** — `→ np_rx type=data play=… pid=… bundle=… parent=… title=…` per Now Playing event from mediaremote-adapter, plus subprocess stderr (debug).
 - **`general`** — startup/shutdown notices, warnings, errors (info / error).
 
