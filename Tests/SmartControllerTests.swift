@@ -1,6 +1,5 @@
-// Drives SmartController via a recording MenuBarToggler mock.
-// Avoids gates 5/6 (which read NSWorkspace.frontmostApplication) by
-// using non-FS state or overrule pins.
+// Drives SmartController with a recording MenuBarToggler and a mock
+// FrontmostAppProvider for deterministic gate coverage.
 
 @testable import houdini
 import Testing
@@ -23,10 +22,25 @@ private final class RecordingMenuBar: MenuBarToggler {
     }
 }
 
+@MainActor
+private final class MockFrontmostProvider: FrontmostAppProvider {
+    var frontmostApp: FrontmostInfo?
+}
+
 @Suite("SmartController")
 @MainActor
 struct SmartControllerTests {
-    private static let fsEntry = DockSpaceEvent.fullScreenState(
+    private static func makeController(
+        frontmost: FrontmostInfo? = nil,
+    ) -> (SmartController, RecordingMenuBar, MockFrontmostProvider) {
+        let bar = RecordingMenuBar()
+        let provider = MockFrontmostProvider()
+        provider.frontmostApp = frontmost
+        let controller = SmartController(menuBar: bar, frontmostProvider: provider)
+        return (controller, bar, provider)
+    }
+
+    private static let fsEntry100 = DockSpaceEvent.fullScreenState(
         DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(100)),
     )
 
@@ -34,13 +48,21 @@ struct SmartControllerTests {
         DockFullScreenState(isFullScreen: false, fsOwnerPID: nil),
     )
 
+    private static func playing(pid: Int32, parentBundle: String) -> NowPlayingSnapshot {
+        NowPlayingSnapshot(
+            playing: true,
+            pid: NowPlayingPID(pid),
+            bundle: parentBundle,
+            parentBundle: parentBundle,
+            title: "Track",
+        )
+    }
+
     // MARK: - Hotkey on Desktop
 
     @Test("Hotkey on Desktop is refused: no apply, overrule unchanged")
     func hotkeyOnDesktopRefused() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
-        // Initial state: dockFs.isFullScreen=false (no FS event sent).
+        let (controller, bar, _) = Self.makeController()
         controller.toggleOverrule()
         #expect(controller.overrule == .auto)
         #expect(bar.calls.isEmpty)
@@ -50,17 +72,14 @@ struct SmartControllerTests {
 
     @Test("Hotkey in FS sets overrule and applies")
     func hotkeyInFSPins() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
-        controller.handleDockEvent(Self.fsEntry)
+        let (controller, bar, _) = Self.makeController()
+        controller.handleDockEvent(Self.fsEntry100)
         bar.calls.removeAll() // ignore the FS-entry apply
 
         controller.toggleOverrule()
 
-        // FS gates 5/6 likely fail (frontmost app isn't pid 100), so
-        // pre-pin effective is "show" → toggle pins to forceHide.
+        // Frontmost is nil → gate 3 trips → effective false → toggle pins forceHide.
         #expect(controller.overrule == .forceHide)
-        // Apply emitted with isFullScreen=true (the snapshot's dockFs).
         #expect(bar.calls == [.apply(shouldHide: true, isFullScreen: true)])
     }
 
@@ -68,10 +87,9 @@ struct SmartControllerTests {
 
     @Test("Desktop arrival clears active overrule and calls resetToVisible")
     func desktopArrivalClearsPin() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
-        controller.handleDockEvent(Self.fsEntry)
-        controller.toggleOverrule() // pin while in FS
+        let (controller, bar, _) = Self.makeController()
+        controller.handleDockEvent(Self.fsEntry100)
+        controller.toggleOverrule()
         #expect(controller.overrule != .auto)
         bar.calls.removeAll()
 
@@ -83,9 +101,7 @@ struct SmartControllerTests {
 
     @Test("Desktop arrival with no active overrule: still resets, no apply")
     func desktopArrivalIdempotent() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
-        // Never pinned; overrule starts at .auto.
+        let (controller, bar, _) = Self.makeController()
 
         controller.handleDockEvent(.desktopArrival)
 
@@ -97,29 +113,24 @@ struct SmartControllerTests {
 
     @Test("Same FS-state event twice: first applies, second is eval_skipped")
     func heartbeatDedup() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
+        let (controller, bar, _) = Self.makeController()
 
-        controller.handleDockEvent(Self.fsEntry)
+        controller.handleDockEvent(Self.fsEntry100)
         let firstCount = bar.calls.count
 
-        controller.handleDockEvent(Self.fsEntry)
+        controller.handleDockEvent(Self.fsEntry100)
 
-        // Second event was a no-op (snap == last → eval_skipped).
         #expect(bar.calls.count == firstCount)
     }
 
     @Test("FS exit applies with shouldHide=false (gate 1 trips, not_fullscreen)")
     func fsExitShowsBar() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
-        controller.handleDockEvent(Self.fsEntry)
+        let (controller, bar, _) = Self.makeController()
+        controller.handleDockEvent(Self.fsEntry100)
         bar.calls.removeAll()
 
         controller.handleDockEvent(Self.fsExit)
 
-        // Gate 1 (not_fullscreen) → effective false → apply(false).
-        // isFullScreen passed to apply is the snapshot's value: false.
         #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: false)])
     }
 
@@ -127,23 +138,83 @@ struct SmartControllerTests {
 
     @Test("updateMedia triggers an evaluation")
     func updateMediaTriggersEvaluate() {
-        let bar = RecordingMenuBar()
-        let controller = SmartController(menuBar: bar)
-        // Send an initial event to populate lastSnapshot so the
-        // updateMedia call below is a real delta, not the first.
+        let (controller, bar, _) = Self.makeController()
         controller.handleDockEvent(Self.fsExit)
         bar.calls.removeAll()
 
-        controller.updateMedia(NowPlayingSnapshot(
-            playing: true,
-            pid: NowPlayingPID(200),
-            bundle: "com.example.player",
-            parentBundle: "com.example.player",
-            title: "Track A",
+        controller.updateMedia(Self.playing(pid: 200, parentBundle: "com.example.player"))
+
+        #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: false)])
+    }
+
+    // MARK: - Gate 5 (front_not_fs_owner)
+
+    @Test("Gate 5: frontmost ≠ FS-owner → show(front_not_fs_owner)")
+    func gate5FrontNotFsOwner() {
+        // Untracked test pids make responsibility-pid resolution
+        // return 0, so isSameApp correctly returns false.
+        let (controller, bar, _) = Self.makeController(
+            frontmost: FrontmostInfo(pid: 200, name: "Other", bundle: "com.other.App"),
+        )
+        controller.updateMedia(Self.playing(pid: 300, parentBundle: "com.np.App"))
+        bar.calls.removeAll()
+
+        controller.handleDockEvent(Self.fsEntry100)
+
+        #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: true)])
+    }
+
+    // MARK: - Gate 6 (app_mismatch)
+
+    @Test("Gate 6: process AND bundle mismatch → show(app_mismatch)")
+    func gate6AppMismatch() {
+        let (controller, bar, _) = Self.makeController(
+            frontmost: FrontmostInfo(pid: 200, name: "Front", bundle: "com.front.App"),
+        )
+        controller.updateMedia(Self.playing(pid: 300, parentBundle: "com.np.App"))
+        bar.calls.removeAll()
+
+        controller.handleDockEvent(.fullScreenState(
+            DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(200)),
         ))
 
-        // dockFs.isFullScreen=false, so even with playing=true the
-        // decision is .showNotFullScreen → apply(false).
-        #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: false)])
+        #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: true)])
+    }
+
+    @Test("Gate 6: bundle match passes when process mismatches → hide")
+    func gate6BundleMatchHides() {
+        let (controller, bar, _) = Self.makeController(
+            frontmost: FrontmostInfo(pid: 200, name: "App", bundle: "com.same.App"),
+        )
+        controller.updateMedia(Self.playing(pid: 300, parentBundle: "com.same.App"))
+        bar.calls.removeAll()
+
+        controller.handleDockEvent(.fullScreenState(
+            DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(200)),
+        ))
+
+        #expect(bar.calls == [.apply(shouldHide: true, isFullScreen: true)])
+    }
+
+    // MARK: - Front-app change handler
+
+    @Test("handleFrontAppChange refreshes the snapshot")
+    func handleFrontAppChangeRefreshes() {
+        let (controller, bar, provider) = Self.makeController(
+            frontmost: FrontmostInfo(pid: 200, name: "Same", bundle: "com.same.App"),
+        )
+        controller.updateMedia(Self.playing(pid: 300, parentBundle: "com.same.App"))
+        controller.handleDockEvent(.fullScreenState(
+            DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(200)),
+        ))
+        #expect(bar.calls.last == .apply(shouldHide: true, isFullScreen: true))
+        bar.calls.removeAll()
+
+        provider.frontmostApp = FrontmostInfo(
+            pid: 999, name: "Other", bundle: "com.other.App",
+        )
+        controller.handleFrontAppChange()
+
+        #expect(bar.calls == [.apply(shouldHide: false, isFullScreen: true)])
     }
 }

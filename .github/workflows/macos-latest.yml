@@ -1,0 +1,29 @@
+name: macOS-latest weekly
+
+# Weekly canary on macos-latest. Heads-up only, not a release gate
+# (main ci.yml on macos-15 is the merge gate).
+
+on:
+  schedule:
+    - cron: '0 4 * * 1' # Mondays 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests on macos-latest
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swift --version
+      - name: swift test
+        run: swift test -Xswiftc -swift-version -Xswiftc 6 -Xswiftc -strict-concurrency=complete
