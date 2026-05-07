@@ -90,6 +90,7 @@ final class SmartController: NSObject {
     // MARK: - State
 
     private let menuBar: MenuBarToggler
+    private let frontmostProvider: FrontmostAppProvider
     private var dockFs: DockFullScreenState = .initial
     private var isPlaying: Bool = false
     private var nowPlayingPID: NowPlayingPID?
@@ -115,8 +116,12 @@ final class SmartController: NSObject {
 
     // MARK: - Lifecycle
 
-    init(menuBar: MenuBarToggler) {
+    init(
+        menuBar: MenuBarToggler,
+        frontmostProvider: FrontmostAppProvider = WorkspaceFrontmostAppProvider(),
+    ) {
         self.menuBar = menuBar
+        self.frontmostProvider = frontmostProvider
         super.init()
     }
 
@@ -145,12 +150,16 @@ final class SmartController: NSObject {
     // MARK: - Input handlers
 
     @objc private func onFrontAppChange(_: Notification) {
-        let app = NSWorkspace.shared.frontmostApplication
+        handleFrontAppChange()
+    }
+
+    func handleFrontAppChange() {
+        let app = frontmostProvider.frontmostApp
         Log.controller.debug("→ \(Self.formatFrontChange(app), privacy: .public)")
         // front_app fires ~30–60ms before dock_stay on FS↔FS hops.
         // Refresh fsOwnerPID so gate 5 doesn't trip on the prior
         // Space's cached owner; dock_stay then dedups.
-        if dockFs.isFullScreen, let pid = app?.processIdentifier {
+        if dockFs.isFullScreen, let pid = app?.pid {
             refreshFSOwner(pid: pid)
         }
         evaluate(trigger: .frontApp)
@@ -190,7 +199,7 @@ final class SmartController: NSObject {
     /// new frontmost.
     private func onStaySpaceChange() {
         guard dockFs.isFullScreen,
-              let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+              let pid = frontmostProvider.frontmostApp?.pid
         else { return }
         refreshFSOwner(pid: pid)
         evaluate(trigger: .dockStay)
@@ -247,10 +256,10 @@ final class SmartController: NSObject {
 
     /// Pure function of `SmartController`'s cached state — never mutates.
     private func takeSnapshot() -> Snapshot {
-        let frontApp = NSWorkspace.shared.frontmostApplication
-        let appKitFrontPID = frontApp.map { FrontmostPID($0.processIdentifier) }
-        let appKitFrontName = frontApp?.localizedName ?? "(unknown)"
-        let appKitFrontBundle = frontApp?.bundleIdentifier
+        let frontApp = frontmostProvider.frontmostApp
+        let appKitFrontPID = frontApp.map { FrontmostPID($0.pid) }
+        let appKitFrontName = frontApp?.name ?? "(unknown)"
+        let appKitFrontBundle = frontApp?.bundle
 
         return Snapshot(
             appKitFrontPID: appKitFrontPID,
@@ -345,10 +354,10 @@ final class SmartController: NSObject {
 
     // MARK: - Log formatting — boundary breadcrumbs
 
-    private static func formatFrontChange(_ app: NSRunningApplication?) -> String {
-        let pid = formatNullable(app?.processIdentifier)
-        let bundle = formatNullableString(app?.bundleIdentifier)
-        let name = quoted(app?.localizedName ?? "(unknown)")
+    private static func formatFrontChange(_ app: FrontmostInfo?) -> String {
+        let pid = formatNullable(app?.pid)
+        let bundle = formatNullableString(app?.bundle)
+        let name = quoted(app?.name ?? "(unknown)")
         return "front_rx pid=\(pid) bundle=\(bundle) name=\(name)"
     }
 
