@@ -30,13 +30,14 @@ class Houdini < Formula
       ⌃⌥⌘M flips the menu bar against the daemon's decision until
       the next signal change. See the README for behavior and mode
       differences:
- 
+
           https://github.com/mgxv/houdini#modes
- 
+
       After each upgrade, restart the daemon — macOS treats the
       freshly-signed binary as a new identity:
- 
+
           brew services restart houdini
+
     EOS
   end
 
