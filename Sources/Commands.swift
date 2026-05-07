@@ -23,7 +23,7 @@ func runForeground() {
 
     acquireInstanceLock()
 
-    let menuBar = MenuBarToggler()
+    let menuBar = MenuBarToggle()
     menuBar.resetToVisible()
 
     let mode = ModeState.read()
@@ -42,7 +42,7 @@ func runForeground() {
 }
 
 @MainActor
-private func runSmart(menuBar: MenuBarToggler, activity: NSObjectProtocol) {
+private func runSmart(menuBar: MenuBarToggle, activity: NSObjectProtocol) {
     let artifacts = locateArtifacts()
     let controller = SmartController(menuBar: menuBar)
 
@@ -84,7 +84,7 @@ private func runSmart(menuBar: MenuBarToggler, activity: NSObjectProtocol) {
 }
 
 @MainActor
-private func runFixed(menuBar: MenuBarToggler, activity: NSObjectProtocol) {
+private func runFixed(menuBar: MenuBarToggle, activity: NSObjectProtocol) {
     let controller = FixedController(menuBar: menuBar)
     controller.start()
 

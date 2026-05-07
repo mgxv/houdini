@@ -99,7 +99,7 @@ final class SmartController: NSObject {
 
     /// Hotkey-driven override. Cleared only on Desktop arrival;
     /// survives front-app switches, FS↔FS hops, and play/pause.
-    private var overrule: Overrule = .auto
+    var overrule: Overrule = .auto
 
     private var lastSnapshot: Snapshot?
 
@@ -165,7 +165,7 @@ final class SmartController: NSObject {
         evaluate(trigger: .adapter)
     }
 
-    private func handleDockEvent(_ event: DockSpaceEvent) {
+    func handleDockEvent(_ event: DockSpaceEvent) {
         switch event {
         case let .fullScreenState(state):
             updateDockFullScreen(state)
@@ -211,9 +211,12 @@ final class SmartController: NSObject {
 
     // MARK: - Override handling
 
-    /// Flips the bar against its current effective state. The pin
-    /// survives until the next Desktop arrival.
-    private func toggleOverrule() {
+    /// Refused on Desktop — pref is FS-only.
+    func toggleOverrule() {
+        guard dockFs.isFullScreen else {
+            Log.controller.info("→ hotkey ignored (not in fullscreen)")
+            return
+        }
         let snap = takeSnapshot()
         overrule = snap.effectiveShouldHide ? .forceShow : .forceHide
         evaluate(trigger: .hotkey)
@@ -235,7 +238,10 @@ final class SmartController: NSObject {
         }
         lastSnapshot = snap
 
-        menuBar.apply(shouldHide: snap.effectiveShouldHide)
+        menuBar.apply(
+            shouldHide: snap.effectiveShouldHide,
+            isFullScreen: snap.dockFs.isFullScreen,
+        )
         logSnapshot(snap, trigger: trigger)
     }
 

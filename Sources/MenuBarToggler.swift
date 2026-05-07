@@ -9,7 +9,13 @@
 import Foundation
 
 @MainActor
-final class MenuBarToggler {
+protocol MenuBarToggler: AnyObject {
+    func apply(shouldHide: Bool, isFullScreen: Bool)
+    func resetToVisible()
+}
+
+@MainActor
+final class MenuBarToggle: MenuBarToggler {
     private static let key = "AppleMenuBarVisibleInFullscreen" as CFString
     private static let domain = kCFPreferencesAnyApplication
     private static let user = kCFPreferencesCurrentUser
@@ -18,7 +24,8 @@ final class MenuBarToggler {
     private static let changeNotification =
         Notification.Name("AppleInterfaceFullScreenMenuBarVisibilityChangedNotification")
 
-    func apply(shouldHide: Bool) {
+    func apply(shouldHide: Bool, isFullScreen: Bool) {
+        guard isFullScreen else { return }
         write(visible: !shouldHide)
     }
 
