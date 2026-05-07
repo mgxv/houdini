@@ -28,7 +28,7 @@ final class FixedController {
 
     private func toggle() {
         isHidden.toggle()
-        menuBar.apply(shouldHide: isHidden)
+        menuBar.apply(shouldHide: isHidden, isFullScreen: true)
         let verb = isHidden ? "hide" : "show"
         Log.controller.info("→ \(verb, privacy: .public)  trig=hotkey mode=fixed")
     }
