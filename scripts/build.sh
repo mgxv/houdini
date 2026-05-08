@@ -161,7 +161,7 @@ ok "removed ./$FRAMEWORK, ./$BINARY"
 
 step "Compiling $FRAMEWORK"
 info "archs: arm64, x86_64 — target: macOS $MIN_MACOS+"
-info "libs:  Foundation, AppKit, JavaScriptCore, UniformTypeIdentifiers"
+info "libs:  Foundation, AppKit, UniformTypeIdentifiers"
 mkdir -p "$FRAMEWORK/Versions/A/Resources" "$FRAMEWORK/Versions/A/Headers"
 clang \
     -arch arm64 -arch x86_64 \
@@ -169,7 +169,7 @@ clang \
     -fobjc-arc -fvisibility=default \
     -dynamiclib \
     -framework Foundation -framework AppKit \
-    -framework JavaScriptCore -framework UniformTypeIdentifiers \
+    -framework UniformTypeIdentifiers \
     -I"$VENDOR/include" -I"$VENDOR/src" \
     -install_name "@rpath/$FRAMEWORK/Versions/A/$FRAMEWORK_NAME" \
     -o "$FRAMEWORK/Versions/A/$FRAMEWORK_NAME" \
