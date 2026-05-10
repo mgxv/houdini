@@ -1,6 +1,5 @@
 // Daemon operating mode. `smart` runs the signal-fusion pipeline;
-// `fixed` is hotkey-only. Read once at daemon startup — changes
-// require `brew services restart houdini`.
+// `fixed` is hotkey-only. Read at startup and re-read on SIGHUP.
 
 import Foundation
 
