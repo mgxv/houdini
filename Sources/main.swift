@@ -20,6 +20,8 @@ MainActor.assumeIsolated {
         runLogs(args: Array(args.dropFirst()))
     case "mode":
         runMode(args: Array(args.dropFirst()))
+    case "deny":
+        runDeny(args: Array(args.dropFirst()))
     case "status":
         runStatus()
     case "":

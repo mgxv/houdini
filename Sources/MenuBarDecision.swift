@@ -14,6 +14,7 @@ enum MenuBarDecision {
     case showNoNowPlayingPid
     case showFrontNotFsOwner
     case showAppMismatch
+    case showDenyList
 
     var shouldHide: Bool {
         if case .hide = self { return true }
@@ -33,6 +34,7 @@ enum MenuBarDecision {
         case .showNoNowPlayingPid: "show(no_now_playing_pid)"
         case .showFrontNotFsOwner: "show(front_not_fs_owner)"
         case .showAppMismatch: "show(app_mismatch)"
+        case .showDenyList: "show(deny_list)"
         }
     }
 }
@@ -40,6 +42,8 @@ enum MenuBarDecision {
 /// Returns `.hide` only when every gate passes; each `show*` case
 /// names the gate that rejected. Order matters — earlier gates
 /// short-circuit later ones (`MenuBarDecisionTests.gateOrdering`).
+/// `appOverrides` is a post-pass: only flips a `.hide` to
+/// `.showDenyList`, never the other way.
 func menuBarDecision(
     dockFs: DockFullScreenState,
     isPlaying: Bool,
@@ -47,6 +51,7 @@ func menuBarDecision(
     appKitFrontBundle: String?,
     nowPlayingPID: NowPlayingPID?,
     nowPlayingParentBundle: String?,
+    appOverrides: AppOverrides,
 ) -> MenuBarDecision {
     // 1 — fullscreen Space is active. Outside fullscreen the OS
     // shows the menu bar via its own auto-hide pref; the rest of
@@ -78,6 +83,10 @@ func menuBarDecision(
         nowPlayingPID: nowPlayingPID,
         nowPlayingParentBundle: nowPlayingParentBundle,
     ) else { return .showAppMismatch }
+
+    if let bundle = appKitFrontBundle, appOverrides.deny.contains(bundle) {
+        return .showDenyList
+    }
 
     return .hide
 }
