@@ -50,6 +50,25 @@ func acquireInstanceLock() {
         }
         die("flock on \(path) failed: \(String(cString: strerror(errno)))")
     }
+
+    // PID stamp lets cross-process callers SIGHUP us; safe to
+    // write here because we hold the exclusive lock.
+    ftruncate(fd, 0)
+    let pidLine = "\(getpid())\n"
+    pidLine.withCString { cString in
+        _ = write(fd, cString, strlen(cString))
+    }
+}
+
+func readDaemonPID() -> pid_t? {
+    readDaemonPID(at: instanceLockURL())
+}
+
+func readDaemonPID(at url: URL) -> pid_t? {
+    guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+        return nil
+    }
+    return pid_t(contents.trimmingCharacters(in: .whitespacesAndNewlines))
 }
 
 /// Side-effect-free probe used by `status`. Returns false if the

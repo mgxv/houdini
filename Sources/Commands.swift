@@ -33,69 +33,130 @@ func runForeground() {
         )
     print("houdini \(version) running (mode=\(mode.rawValue)). Press Ctrl-C to quit.")
 
-    switch mode {
-    case .smart:
-        runSmart(menuBar: menuBar, activity: activity)
-    case .fixed:
-        runFixed(menuBar: menuBar, activity: activity)
+    let current = CurrentController(mode: mode, menuBar: menuBar)
+    current.start()
+
+    let signalSources = installSignalHandlers {
+        current.shutdown()
+    }
+    let reloadSource = installReloadHandler {
+        current.reload()
+    }
+
+    withExtendedLifetime((signalSources, reloadSource, activity)) {
+        NSApp.run()
+    }
+}
+
+// MARK: - CurrentController (mode swap)
+
+/// Each reload constructs fresh underlying objects — Process /
+/// DispatchSource / Carbon refs are single-shot and can't be re-used
+/// after stop.
+@MainActor
+final class CurrentController {
+    private let menuBar: MenuBarToggler
+    private let opsFactory: @MainActor (Mode, MenuBarToggler) -> ControllerOps
+    private let modeReader: () -> Mode
+    private(set) var mode: Mode
+    private var ops: ControllerOps
+
+    init(
+        mode: Mode,
+        menuBar: MenuBarToggler,
+        opsFactory: @escaping @MainActor (Mode, MenuBarToggler)
+            -> ControllerOps = defaultOpsFactory,
+        modeReader: @escaping () -> Mode = ModeState.read,
+    ) {
+        self.mode = mode
+        self.menuBar = menuBar
+        self.opsFactory = opsFactory
+        self.modeReader = modeReader
+        ops = opsFactory(mode, menuBar)
+    }
+
+    func start() {
+        ops.start()
+    }
+
+    func reload() {
+        let newMode = modeReader()
+        let oldMode = mode
+        guard newMode != oldMode else { return }
+        Log.general.notice(
+            "mode change: \(oldMode.rawValue, privacy: .public) → \(newMode.rawValue, privacy: .public)",
+        )
+        ops.stop()
+        menuBar.resetToVisible()
+        mode = newMode
+        ops = opsFactory(newMode, menuBar)
+        ops.start()
+    }
+
+    func shutdown() {
+        ops.stop()
+        menuBar.resetToVisible()
     }
 }
 
 @MainActor
-private func runSmart(menuBar: MenuBarToggle, activity: NSObjectProtocol) {
+func defaultOpsFactory(_ mode: Mode, _ menuBar: MenuBarToggler) -> ControllerOps {
+    switch mode {
+    case .smart: makeSmartOps(menuBar: menuBar)
+    case .fixed: makeFixedOps(menuBar: menuBar)
+    }
+}
+
+struct ControllerOps {
+    let start: @MainActor () -> Void
+    let stop: @MainActor () -> Void
+}
+
+@MainActor
+private func makeSmartOps(menuBar: MenuBarToggler) -> ControllerOps {
     let artifacts = locateArtifacts()
     let controller = SmartController(menuBar: menuBar)
-
-    // Prime with a one-shot Now Playing fetch so the first logged
-    // evaluation reflects current state, not a blank placeholder
-    // from before the streaming adapter delivers its first event.
-    // Skip on failure — not worth aborting startup over.
-    if let snapshot = fetchNowPlayingOnce(artifacts: artifacts) {
-        controller.updateMedia(snapshot)
-    }
-
     let adapter = AdapterClient(
         artifacts: artifacts,
         onUpdate: { @MainActor snapshot in
             controller.updateMedia(snapshot)
         },
     )
-
-    do {
-        try controller.start()
-    } catch {
-        die("failed to start dock-space watcher: \(error)")
-    }
-    do {
-        try adapter.start()
-    } catch {
-        die("failed to start mediaremote-adapter subprocess: \(error)")
-    }
-
-    let signalSources = installSignalHandlers {
-        menuBar.resetToVisible()
-        adapter.stop()
-        controller.stop()
-    }
-
-    withExtendedLifetime((signalSources, activity)) {
-        NSApp.run()
-    }
+    return ControllerOps(
+        start: {
+            // Prime with a one-shot Now Playing fetch so the first
+            // logged evaluation reflects current state, not a blank
+            // placeholder from before the streaming adapter delivers
+            // its first event. Skip on failure — not worth aborting
+            // startup over.
+            if let snapshot = fetchNowPlayingOnce(artifacts: artifacts) {
+                controller.updateMedia(snapshot)
+            }
+            do {
+                try controller.start()
+            } catch {
+                die("failed to start dock-space watcher: \(error)")
+            }
+            do {
+                try adapter.start()
+            } catch {
+                die("failed to start mediaremote-adapter subprocess: \(error)")
+            }
+        },
+        stop: {
+            adapter.stop()
+            controller.stop()
+        },
+    )
 }
 
 @MainActor
-private func runFixed(menuBar: MenuBarToggle, activity: NSObjectProtocol) {
+private func makeFixedOps(menuBar: MenuBarToggler) -> ControllerOps {
     let controller = FixedController(menuBar: menuBar)
-    controller.start()
-
-    let signalSources = installSignalHandlers {
-        menuBar.resetToVisible()
-        controller.stop()
-    }
-
-    withExtendedLifetime((signalSources, activity)) {
-        NSApp.run()
-    }
+    return ControllerOps(
+        start: { controller.start() },
+        stop: { controller.stop() },
+    )
 }
 
 /// Installs main-thread SIGINT/SIGTERM handlers that run `shutdown`
@@ -119,6 +180,22 @@ func installSignalHandlers(_ shutdown: @escaping @MainActor () -> Void) -> [Disp
         src.resume()
         return src
     }
+}
+
+@MainActor
+func installReloadHandler(_ reload: @escaping @MainActor () -> Void) -> DispatchSourceSignal {
+    signal(SIGHUP, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: SIGHUP, queue: .main)
+    src.setEventHandler {
+        MainActor.assumeIsolated {
+            // Logged before the no-op guard so a same-mode SIGHUP
+            // still leaves a breadcrumb.
+            Log.general.debug("SIGHUP received")
+            reload()
+        }
+    }
+    src.resume()
+    return src
 }
 
 // MARK: - status
@@ -170,9 +247,27 @@ func runMode(args: [String]) -> Never {
     ModeState.write(mode)
     print("mode set to \(mode.rawValue)")
     if probeDaemonRunning() {
-        print("daemon is running; restart to apply: brew services restart houdini")
+        if signalDaemonReload() {
+            print("daemon reloaded")
+        } else {
+            print(
+                "daemon is running but couldn't be signaled; restart to apply: brew services restart houdini",
+            )
+        }
     }
     exit(0)
+}
+
+/// Retries to close the race where the daemon holds the flock but
+/// hasn't yet written its PID.
+private func signalDaemonReload() -> Bool {
+    for _ in 0 ..< 3 {
+        if let pid = readDaemonPID(), kill(pid, SIGHUP) == 0 {
+            return true
+        }
+        usleep(50000) // 50ms
+    }
+    return false
 }
 
 // MARK: - version
@@ -249,9 +344,9 @@ func usage() {
 
     Usage:
       houdini                   Run the daemon (invoked by brew services)
-      houdini mode smart|fixed  Set the mode. Default is `smart`.
-                                Restart the daemon to apply:
-                                `brew services restart houdini`.
+      houdini mode smart|fixed  Set the mode. Default is `smart`. The
+                                running daemon (if any) is signaled to
+                                reload — no restart required.
                                 Read the current mode with `houdini status`.
       houdini status            Print version, mode, daemon state,
                                 subprocess health (smart mode only),

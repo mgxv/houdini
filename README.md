@@ -29,7 +29,7 @@ Pause, switch apps, or exit fullscreen, and the bar comes back.
 
 ## Modes
 
-Set with `houdini mode <smart|fixed>`, then `brew services restart houdini` to apply. Default is `smart`. Current mode shows in `houdini status`.
+Set with `houdini mode <smart|fixed>`. Default is `smart`. Current mode shows in `houdini status`.
 
   <details><summary><strong>Smart</strong> — automatic, signal-driven (default)</summary>
 
@@ -89,7 +89,7 @@ brew services stop    houdini     # stop and disable
 brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 
-houdini mode smart|fixed          # set mode (restart to apply); current mode shows in `houdini status`
+houdini mode smart|fixed          # set mode (applied immediately via SIGHUP); current mode shows in `houdini status`
 ```
 
 Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
