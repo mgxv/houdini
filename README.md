@@ -29,7 +29,7 @@ Pause, switch apps, or exit fullscreen, and the bar comes back.
 
 ## Modes
 
-Set with `houdini mode <smart|fixed>`. Default is `smart`. Current mode shows in `houdini status`.
+Set with `houdini mode <smart|fixed>`; print the current value with `houdini mode`. Default is `smart`.
 
   <details><summary><strong>Smart</strong> — automatic, signal-driven (default)</summary>
 
@@ -89,7 +89,8 @@ brew services stop    houdini     # stop and disable
 brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 
-houdini mode smart|fixed          # set mode (applied immediately via SIGHUP); current mode shows in `houdini status`
+houdini mode                      # print the current mode
+houdini mode smart|fixed          # set mode (applied immediately via SIGHUP)
 
 houdini deny                      # list bundles that won't trigger auto-hide
 houdini deny add <bundle>         # add a bundle to the deny list
