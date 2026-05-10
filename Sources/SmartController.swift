@@ -15,6 +15,7 @@ private enum EvalTrigger: String {
     case dockStay = "dock_stay"
     case adapter
     case hotkey
+    case overrides
 }
 
 enum Overrule: String {
@@ -54,6 +55,7 @@ final class SmartController: NSObject {
         let nowPlayingBundle: String?
         let nowPlayingParentBundle: String?
         let nowPlayingTitle: String?
+        let appOverrides: AppOverrides
         var overrule: Overrule
 
         var decision: MenuBarDecision {
@@ -64,6 +66,7 @@ final class SmartController: NSObject {
                 appKitFrontBundle: appKitFrontBundle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
+                appOverrides: appOverrides,
             )
         }
 
@@ -97,6 +100,7 @@ final class SmartController: NSObject {
     private var nowPlayingBundle: String?
     private var nowPlayingParentBundle: String?
     private var nowPlayingTitle: String?
+    private var appOverrides: AppOverrides = .empty
 
     /// Hotkey-driven override. Cleared only on Desktop arrival;
     /// survives front-app switches, FS↔FS hops, and play/pause.
@@ -172,6 +176,12 @@ final class SmartController: NSObject {
         nowPlayingParentBundle = snapshot.parentBundle
         nowPlayingTitle = snapshot.title
         evaluate(trigger: .adapter)
+    }
+
+    func updateOverrides(_ overrides: AppOverrides) {
+        guard appOverrides != overrides else { return }
+        appOverrides = overrides
+        evaluate(trigger: .overrides)
     }
 
     func handleDockEvent(_ event: DockSpaceEvent) {
@@ -271,6 +281,7 @@ final class SmartController: NSObject {
             nowPlayingBundle: nowPlayingBundle,
             nowPlayingParentBundle: nowPlayingParentBundle,
             nowPlayingTitle: nowPlayingTitle,
+            appOverrides: appOverrides,
             overrule: overrule,
         )
     }

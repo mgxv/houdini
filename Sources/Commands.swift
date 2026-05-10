@@ -50,15 +50,17 @@ func runForeground() {
 
 // MARK: - CurrentController (mode swap)
 
-/// Each reload constructs fresh underlying objects — Process /
-/// DispatchSource / Carbon refs are single-shot and can't be re-used
-/// after stop.
+/// Mode swaps build fresh ops because Process / DispatchSource /
+/// Carbon refs are single-shot. Override-only changes skip the
+/// rebuild and push into the live ops.
 @MainActor
 final class CurrentController {
     private let menuBar: MenuBarToggler
     private let opsFactory: @MainActor (Mode, MenuBarToggler) -> ControllerOps
     private let modeReader: () -> Mode
+    private let overridesReader: () -> AppOverrides
     private(set) var mode: Mode
+    private var cachedOverrides: AppOverrides
     private var ops: ControllerOps
 
     init(
@@ -67,30 +69,48 @@ final class CurrentController {
         opsFactory: @escaping @MainActor (Mode, MenuBarToggler)
             -> ControllerOps = defaultOpsFactory,
         modeReader: @escaping () -> Mode = ModeState.read,
+        overridesReader: @escaping () -> AppOverrides = AppOverridesState.read,
     ) {
         self.mode = mode
         self.menuBar = menuBar
         self.opsFactory = opsFactory
         self.modeReader = modeReader
+        self.overridesReader = overridesReader
+        cachedOverrides = .empty
         ops = opsFactory(mode, menuBar)
     }
 
     func start() {
         ops.start()
+        cachedOverrides = overridesReader()
+        ops.updateOverrides(cachedOverrides)
     }
 
     func reload() {
         let newMode = modeReader()
+        let newOverrides = overridesReader()
         let oldMode = mode
-        guard newMode != oldMode else { return }
-        Log.general.notice(
-            "mode change: \(oldMode.rawValue, privacy: .public) → \(newMode.rawValue, privacy: .public)",
-        )
-        ops.stop()
-        menuBar.resetToVisible()
-        mode = newMode
-        ops = opsFactory(newMode, menuBar)
-        ops.start()
+
+        if newMode != oldMode {
+            Log.general.notice(
+                "mode change: \(oldMode.rawValue, privacy: .public) → \(newMode.rawValue, privacy: .public)",
+            )
+            ops.stop()
+            menuBar.resetToVisible()
+            mode = newMode
+            ops = opsFactory(newMode, menuBar)
+            ops.start()
+            ops.updateOverrides(newOverrides)
+            cachedOverrides = newOverrides
+        } else if newOverrides != cachedOverrides {
+            let oldCount = cachedOverrides.deny.count
+            let newCount = newOverrides.deny.count
+            Log.general.notice(
+                "deny list changed: \(oldCount, privacy: .public) → \(newCount, privacy: .public) entries",
+            )
+            ops.updateOverrides(newOverrides)
+            cachedOverrides = newOverrides
+        }
     }
 
     func shutdown() {
@@ -110,6 +130,7 @@ func defaultOpsFactory(_ mode: Mode, _ menuBar: MenuBarToggler) -> ControllerOps
 struct ControllerOps {
     let start: @MainActor () -> Void
     let stop: @MainActor () -> Void
+    let updateOverrides: @MainActor (AppOverrides) -> Void
 }
 
 @MainActor
@@ -147,6 +168,7 @@ private func makeSmartOps(menuBar: MenuBarToggler) -> ControllerOps {
             adapter.stop()
             controller.stop()
         },
+        updateOverrides: { controller.updateOverrides($0) },
     )
 }
 
@@ -156,6 +178,7 @@ private func makeFixedOps(menuBar: MenuBarToggler) -> ControllerOps {
     return ControllerOps(
         start: { controller.start() },
         stop: { controller.stop() },
+        updateOverrides: { _ in },
     )
 }
 
@@ -219,6 +242,10 @@ func runStatus() -> Never {
         print("dock log:       n/a (fixed mode)")
     }
     print("hotkey:         \(hotkeyState)")
+    let denyCount = AppOverridesState.read().deny.count
+    if denyCount > 0 {
+        print("deny list:      \(denyCount) entr\(denyCount == 1 ? "y" : "ies")")
+    }
     let healthy: Bool = switch mode {
     case .smart: daemonRunning && adapterAlive && dockLogAlive
     case .fixed: daemonRunning && hotkeyState == "registered"
@@ -256,6 +283,90 @@ func runMode(args: [String]) -> Never {
         }
     }
     exit(0)
+}
+
+// MARK: - deny
+
+@MainActor
+func runDeny(args: [String]) -> Never {
+    switch args.count {
+    case 0:
+        listDeny()
+    case 2:
+        let action = args[0]
+        let bundle = args[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        switch action {
+        case "add": addDeny(bundle: bundle)
+        case "remove": removeDeny(bundle: bundle)
+        default: die("usage: houdini deny [add|remove] <bundle>")
+        }
+    default:
+        die("usage: houdini deny [add|remove] <bundle>")
+    }
+}
+
+@MainActor
+private func listDeny() -> Never {
+    let overrides = AppOverridesState.read()
+    if overrides.deny.isEmpty {
+        print("(no entries)")
+    } else {
+        for bundle in overrides.deny.sorted() {
+            print(bundle)
+        }
+    }
+    exit(0)
+}
+
+@MainActor
+private func addDeny(bundle: String) -> Never {
+    guard isPlausibleBundle(bundle) else {
+        die("\"\(bundle)\" doesn't look like a bundle ID (e.g. com.spotify.client)")
+    }
+    var overrides = AppOverridesState.read()
+    if overrides.deny.contains(bundle) {
+        print("\(bundle) already in deny list")
+        exit(0)
+    }
+    overrides.deny.insert(bundle)
+    persistAndReload(overrides, action: "added \(bundle) to deny list")
+}
+
+@MainActor
+private func removeDeny(bundle: String) -> Never {
+    var overrides = AppOverridesState.read()
+    guard overrides.deny.contains(bundle) else {
+        print("\(bundle) not in deny list")
+        exit(0)
+    }
+    overrides.deny.remove(bundle)
+    persistAndReload(overrides, action: "removed \(bundle) from deny list")
+}
+
+@MainActor
+private func persistAndReload(_ overrides: AppOverrides, action: String) -> Never {
+    do {
+        try AppOverridesState.write(overrides)
+    } catch {
+        die("could not write deny list: \(error)")
+    }
+    print(action)
+    if probeDaemonRunning() {
+        if signalDaemonReload() {
+            print("daemon reloaded")
+        } else {
+            print(
+                "daemon is running but couldn't be signaled; restart to apply: brew services restart houdini",
+            )
+        }
+    } else {
+        print("(daemon not running — will take effect at next start)")
+    }
+    exit(0)
+}
+
+private func isPlausibleBundle(_ s: String) -> Bool {
+    s.wholeMatch(of: #/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/#) != nil
 }
 
 /// Retries to close the race where the daemon holds the flock but
@@ -346,13 +457,18 @@ func usage() {
       houdini                   Run the daemon (invoked by brew services)
       houdini mode smart|fixed  Set the mode. Default is `smart`. The
                                 running daemon (if any) is signaled to
-                                reload — no restart required.
+                                reload.
                                 Read the current mode with `houdini status`.
+      houdini deny              List bundle IDs that won't trigger
+                                auto-hide even when all gates would
+                                otherwise pass.
+      houdini deny add <bundle>     Add a bundle ID to the deny list.
+      houdini deny remove <bundle>  Remove a bundle ID from the deny list.
       houdini status            Print version, mode, daemon state,
                                 subprocess health (smart mode only),
-                                and hotkey registration. Exits non-zero
-                                if required components for the active
-                                mode aren't running.
+                                hotkey registration, and deny-list size.
+                                Exits non-zero if required components for
+                                the active mode aren't running.
       houdini logs              Stream every houdini unified-log entry
                                 across all categories at debug level —
                                 controller decisions, dock-visibility

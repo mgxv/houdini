@@ -90,9 +90,27 @@ brew services restart houdini     # stop + start
 brew services info    houdini     # state, PID, plist path
 
 houdini mode smart|fixed          # set mode (applied immediately via SIGHUP); current mode shows in `houdini status`
+
+houdini deny                      # list bundles that won't trigger auto-hide
+houdini deny add <bundle>         # add a bundle to the deny list
+houdini deny remove <bundle>      # remove a bundle from the deny list
 ```
 
 Running the binary directly (`./houdini`) is useful for debugging; `brew services` is the normal path.
+
+## Deny list
+
+Some apps drive Now Playing but you'd rather keep the menu bar visible while they're fullscreen — Spotify, Apple Music, etc. Add their bundle IDs to the deny list and they'll be excluded from auto-hide even when all gates would otherwise pass.
+
+```bash
+# Find a bundle ID
+osascript -e 'id of app "Spotify"'      # com.spotify.client
+
+# Manage the list
+houdini deny add com.spotify.client
+houdini deny remove com.spotify.client
+houdini deny                              # list current entries
+```
 
 ## Hotkey
 

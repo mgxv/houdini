@@ -15,6 +15,7 @@ struct MenuBarDecisionTests {
         var appKitFrontBundle: String? = "com.example.App"
         var nowPlayingPID: NowPlayingPID? = .init(100)
         var nowPlayingParentBundle: String? = "com.example.App"
+        var appOverrides: AppOverrides = .empty
 
         var decision: MenuBarDecision {
             menuBarDecision(
@@ -24,6 +25,7 @@ struct MenuBarDecisionTests {
                 appKitFrontBundle: appKitFrontBundle,
                 nowPlayingPID: nowPlayingPID,
                 nowPlayingParentBundle: nowPlayingParentBundle,
+                appOverrides: appOverrides,
             )
         }
     }
@@ -159,5 +161,40 @@ struct MenuBarDecisionTests {
         i.appKitFrontPID = nil
         // Both gate 2 and gate 3 would fail; gate 2 reports first.
         #expect(i.decision == .showNotPlaying)
+    }
+
+    // MARK: - Deny list (post-pass override)
+
+    @Test("Deny list flips a hide → show(deny_list)")
+    func denyFlipsHide() {
+        var i = Inputs()
+        i.appOverrides = AppOverrides(deny: ["com.example.App"])
+        #expect(i.decision == .showDenyList)
+    }
+
+    @Test("Deny list does not affect non-hide outcomes")
+    func denyDoesNotAffectShow() {
+        var i = Inputs()
+        i.isPlaying = false
+        i.appOverrides = AppOverrides(deny: ["com.example.App"])
+        // Gate 2 trips first; deny is post-pass and never reached.
+        #expect(i.decision == .showNotPlaying)
+    }
+
+    @Test("Deny list with non-matching bundle does not flip")
+    func denyNonMatchingDoesNotFlip() {
+        var i = Inputs()
+        i.appOverrides = AppOverrides(deny: ["com.other.App"])
+        #expect(i.decision == .hide)
+    }
+
+    @Test("Deny list with nil front bundle does not flip")
+    func denyNilBundleDoesNotFlip() {
+        // Process match still passes gate 6, but a nil bundle can't
+        // be in the deny set — so .hide stands.
+        var i = Inputs()
+        i.appKitFrontBundle = nil
+        i.appOverrides = AppOverrides(deny: ["com.example.App"])
+        #expect(i.decision == .hide)
     }
 }
