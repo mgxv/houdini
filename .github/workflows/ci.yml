@@ -47,6 +47,29 @@ jobs:
           scandir: ./scripts
           severity: warning
 
+  vendor-format:
+    name: Vendor format
+    # macos-15 so brew-installed clang-format / perltidy match what
+    # developers run locally — Ubuntu's apt packages lag and would
+    # false-fail this job on style changes between versions.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install formatters
+        run: |
+          command -v clang-format >/dev/null || brew install clang-format
+          command -v perltidy     >/dev/null || brew install perltidy
+      - name: Show versions
+        run: |
+          clang-format --version
+          perltidy --version | head -1
+      - name: clang-format check (Obj-C)
+        run: |
+          find vendor/mediaremote-adapter -type f \( -name '*.m' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
+      - name: perltidy check (Perl)
+        run: |
+          diff -u vendor/mediaremote-adapter/bin/mediaremote-adapter.pl <(perltidy -st < vendor/mediaremote-adapter/bin/mediaremote-adapter.pl)
+
   links:
     name: Markdown link check
     runs-on: ubuntu-latest
