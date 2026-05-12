@@ -22,9 +22,7 @@ __attribute__((constructor)) static void init() {
     ];
 }
 
-static bool isModeAccepted(int mode) {
-    return [acceptedModes containsObject:@(mode)];
-}
+static bool isModeAccepted(int mode) { return [acceptedModes containsObject:@(mode)]; }
 
 void adapter_repeat(MRARepeatMode mode) {
 
@@ -37,8 +35,6 @@ void adapter_repeat(MRARepeatMode mode) {
     waitForCommandCompletion();
 }
 
-static inline int repeat_0_mode() {
-    return getEnvFuncParamIntSafe(@"adapter_repeat", 0, @"mode");
-}
+static inline int repeat_0_mode() { return getEnvFuncParamIntSafe(@"adapter_repeat", 0, @"mode"); }
 
 void adapter_repeat_env() { adapter_repeat((MRARepeatMode)repeat_0_mode()); }

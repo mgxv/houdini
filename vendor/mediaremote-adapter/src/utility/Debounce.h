@@ -12,8 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface Debounce : NSObject
 
 @property(nonatomic, assign, readonly) NSTimeInterval delay;
-- (instancetype)initWithDelay:(NSTimeInterval)delay
-                        queue:(nullable dispatch_queue_t)queue;
+- (instancetype)initWithDelay:(NSTimeInterval)delay queue:(nullable dispatch_queue_t)queue;
 - (void)call:(dispatch_block_t)block;
 - (void)cancel;
 

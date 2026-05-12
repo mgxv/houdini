@@ -14,6 +14,5 @@ __attribute__((constructor)) static void initGlobals() {
         fail(@"Failed to initialize MediaRemote Framework");
         return;
     }
-    g_serialdispatchQueue = dispatch_queue_create(
-        "mediaremote-adapter.serial-dispatch-queue", DISPATCH_QUEUE_SERIAL);
+    g_serialdispatchQueue = dispatch_queue_create("mediaremote-adapter.serial-dispatch-queue", DISPATCH_QUEUE_SERIAL);
 }

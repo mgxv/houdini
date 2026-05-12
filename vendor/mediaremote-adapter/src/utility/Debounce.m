@@ -13,8 +13,7 @@
 
 @implementation Debounce
 
-- (instancetype)initWithDelay:(NSTimeInterval)delay
-                        queue:(dispatch_queue_t)queue {
+- (instancetype)initWithDelay:(NSTimeInterval)delay queue:(dispatch_queue_t)queue {
     self = [super init];
     if (self) {
         _delay = MAX(0.0, delay);
@@ -27,8 +26,7 @@
     [self cancel];
     self.pendingBlock = dispatch_block_create(DISPATCH_BLOCK_BARRIER, block);
     dispatch_after(
-        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(self.delay * NSEC_PER_SEC)),
-        self.queue, self.pendingBlock);
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(self.delay * NSEC_PER_SEC)), self.queue, self.pendingBlock);
 }
 
 - (void)cancel {

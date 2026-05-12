@@ -23,8 +23,6 @@ void adapter_speed(int speed) {
     waitForCommandCompletion();
 }
 
-static inline int speed_0_speed() {
-    return getEnvFuncParamIntSafe(@"adapter_speed", 0, @"speed");
-}
+static inline int speed_0_speed() { return getEnvFuncParamIntSafe(@"adapter_speed", 0, @"speed"); }
 
 void adapter_speed_env() { adapter_speed(speed_0_speed()); }

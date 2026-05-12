@@ -22,9 +22,7 @@ __attribute__((constructor)) static void init() {
     ];
 }
 
-static bool isModeAccepted(int mode) {
-    return [acceptedModes containsObject:@(mode)];
-}
+static bool isModeAccepted(int mode) { return [acceptedModes containsObject:@(mode)]; }
 
 void adapter_shuffle(MRAShuffleMode mode) {
 
@@ -37,10 +35,6 @@ void adapter_shuffle(MRAShuffleMode mode) {
     waitForCommandCompletion();
 }
 
-static inline int shuffle_0_mode() {
-    return getEnvFuncParamIntSafe(@"adapter_shuffle", 0, @"mode");
-}
+static inline int shuffle_0_mode() { return getEnvFuncParamIntSafe(@"adapter_shuffle", 0, @"mode"); }
 
-void adapter_shuffle_env() {
-    adapter_shuffle((MRAShuffleMode)shuffle_0_mode());
-}
+void adapter_shuffle_env() { adapter_shuffle((MRAShuffleMode)shuffle_0_mode()); }

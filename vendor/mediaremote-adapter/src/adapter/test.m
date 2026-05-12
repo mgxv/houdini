@@ -16,8 +16,7 @@ static NSFileHandle *helperOutput = nil;
 void cleanup_helper() {
     if (nowPlayingClientHelperTask && helperInput && helperOutput) {
         @try {
-            [helperInput writeData:[@"cleanup\n"
-                                       dataUsingEncoding:NSUTF8StringEncoding]];
+            [helperInput writeData:[@"cleanup\n" dataUsingEncoding:NSUTF8StringEncoding]];
             [helperInput closeFile];
         } @catch (NSException *exception) {
         }
@@ -25,8 +24,7 @@ void cleanup_helper() {
         // Graceful shutdown with timeout
         NSTimeInterval timeout = 2.0;
         NSDate *cleanupDeadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
-        while (nowPlayingClientHelperTask.isRunning &&
-               [cleanupDeadline timeIntervalSinceNow] > 0) {
+        while (nowPlayingClientHelperTask.isRunning && [cleanupDeadline timeIntervalSinceNow] > 0) {
             [NSThread sleepForTimeInterval:0.1];
         }
 
@@ -36,10 +34,8 @@ void cleanup_helper() {
             } @catch (NSException *exception) {
             }
 
-            NSDate *terminationDeadline =
-                [NSDate dateWithTimeIntervalSinceNow:1.0];
-            while (nowPlayingClientHelperTask.isRunning &&
-                   [terminationDeadline timeIntervalSinceNow] > 0) {
+            NSDate *terminationDeadline = [NSDate dateWithTimeIntervalSinceNow:1.0];
+            while (nowPlayingClientHelperTask.isRunning && [terminationDeadline timeIntervalSinceNow] > 0) {
                 [NSThread sleepForTimeInterval:0.1];
             }
         }
@@ -101,9 +97,7 @@ extern void adapter_test(void) {
         // Instantiate helper to ensure MediaRemote has data
         // We only do this if adapterOutput is null to minimize the impact on
         // other apps using the adapter
-        NSString *helperPath =
-            NSProcessInfo.processInfo
-                .environment[@"MEDIAREMOTEADAPTER_TEST_CLIENT_PATH"];
+        NSString *helperPath = NSProcessInfo.processInfo.environment[@"MEDIAREMOTEADAPTER_TEST_CLIENT_PATH"];
         if (helperPath.length == 0) {
             printErrf(@"Test client path is missing");
             cleanup_helper();
@@ -122,9 +116,7 @@ extern void adapter_test(void) {
         @try {
             [nowPlayingClientHelperTask launch];
         } @catch (NSException *exception) {
-            printErrf(
-                @"Exeption while trying to launch test client task: %@: %@",
-                exception.name, exception.reason);
+            printErrf(@"Exeption while trying to launch test client task: %@: %@", exception.name, exception.reason);
             cleanup_helper();
             exit(2);
         }
@@ -135,59 +127,51 @@ extern void adapter_test(void) {
         dispatch_semaphore_t setupSem = dispatch_semaphore_create(0);
         NSMutableString *lineBuffer = [[NSMutableString alloc] init];
         helperOutput.readabilityHandler = ^(NSFileHandle *fh) {
-          @autoreleasepool {
-              NSData *chunk = [fh availableData];
-              if (chunk.length == 0) {
-                  fh.readabilityHandler = nil;
-                  return;
-              }
+            @autoreleasepool {
+                NSData *chunk = [fh availableData];
+                if (chunk.length == 0) {
+                    fh.readabilityHandler = nil;
+                    return;
+                }
 
-              // Validate UTF-8 encoding with graceful degradation
-              NSString *chunkStr =
-                  [[NSString alloc] initWithData:chunk
-                                        encoding:NSUTF8StringEncoding];
-              if (!chunkStr) {
-                  return;
-              }
+                // Validate UTF-8 encoding with graceful degradation
+                NSString *chunkStr = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding];
+                if (!chunkStr) {
+                    return;
+                }
 
-              [lineBuffer appendString:chunkStr];
+                [lineBuffer appendString:chunkStr];
 
-              NSUInteger bufferLength = [lineBuffer length];
-              NSUInteger searchStart = 0;
+                NSUInteger bufferLength = [lineBuffer length];
+                NSUInteger searchStart = 0;
 
-              while (searchStart < bufferLength) {
-                  NSRange remainingRange =
-                      NSMakeRange(searchStart, bufferLength - searchStart);
-                  NSRange nlRange = [lineBuffer rangeOfString:@"\n"
-                                                      options:0
-                                                        range:remainingRange];
+                while (searchStart < bufferLength) {
+                    NSRange remainingRange = NSMakeRange(searchStart, bufferLength - searchStart);
+                    NSRange nlRange = [lineBuffer rangeOfString:@"\n" options:0 range:remainingRange];
 
-                  if (nlRange.location == NSNotFound) {
-                      break;
-                  }
+                    if (nlRange.location == NSNotFound) {
+                        break;
+                    }
 
-                  NSUInteger lineLength = nlRange.location - searchStart;
-                  NSString *line = [lineBuffer
-                      substringWithRange:NSMakeRange(searchStart, lineLength)];
+                    NSUInteger lineLength = nlRange.location - searchStart;
+                    NSString *line = [lineBuffer substringWithRange:NSMakeRange(searchStart, lineLength)];
 
-                  if ([line isEqualToString:@"setup_done"]) {
-                      fh.readabilityHandler = nil;
-                      dispatch_semaphore_signal(setupSem);
-                      return;
-                  }
+                    if ([line isEqualToString:@"setup_done"]) {
+                        fh.readabilityHandler = nil;
+                        dispatch_semaphore_signal(setupSem);
+                        return;
+                    }
 
-                  searchStart = nlRange.location + nlRange.length;
-              }
-              if (searchStart > 0) {
-                  [lineBuffer
-                      deleteCharactersInRange:NSMakeRange(0, searchStart)];
-              }
-          }
+                    searchStart = nlRange.location + nlRange.length;
+                }
+                if (searchStart > 0) {
+                    [lineBuffer deleteCharactersInRange:NSMakeRange(0, searchStart)];
+                }
+            }
         };
         // Wait for setup_done or timeout
         NSTimeInterval setupTimeout = 3.0;
-        dispatch_time_t timeout = dispatch_time(
-            DISPATCH_TIME_NOW, (int64_t)(setupTimeout * NSEC_PER_SEC));
+        dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(setupTimeout * NSEC_PER_SEC));
         long result_wait = dispatch_semaphore_wait(setupSem, timeout);
 
         if (helperOutput.readabilityHandler) {
@@ -195,8 +179,7 @@ extern void adapter_test(void) {
         }
 
         if (result_wait != 0) {
-            printErrf(@"The test client did not signal setup_done within %.1fs",
-                      setupTimeout);
+            printErrf(@"The test client did not signal setup_done within %.1fs", setupTimeout);
             cleanup_helper();
             exit(3);
         }
