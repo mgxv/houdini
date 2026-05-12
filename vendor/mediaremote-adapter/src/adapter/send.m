@@ -62,8 +62,6 @@ void adapter_send(MRACommand command) {
     waitForCommandCompletion();
 }
 
-static inline int send_0_command() {
-    return getEnvFuncParamIntSafe(@"adapter_send", 0, @"command");
-}
+static inline int send_0_command() { return getEnvFuncParamIntSafe(@"adapter_send", 0, @"command"); }
 
 void adapter_send_env() { adapter_send((MRACommand)send_0_command()); }

@@ -7,8 +7,7 @@
 
 NSString *kMRAProcessIdentifier = @"processIdentifier";
 NSString *kMRABundleIdentifier = @"bundleIdentifier";
-NSString *kMRAParentApplicationBundleIdentifier =
-    @"parentApplicationBundleIdentifier";
+NSString *kMRAParentApplicationBundleIdentifier = @"parentApplicationBundleIdentifier";
 NSString *kMRAPlaying = @"playing";
 
 NSString *kMRADurationMicros = @"durationMicros";
@@ -56,9 +55,7 @@ NSString *kMRAContentItemIdentifier = @"contentItemIdentifier";
 NSString *kMRARadioStationHash = @"radioStationHash";
 NSString *kMRAMediaType = @"mediaType";
 
-NSArray<NSString *> *mandatoryPayloadKeys(void) {
-    return @[ kMRAProcessIdentifier, kMRAPlaying ];
-}
+NSArray<NSString *> *mandatoryPayloadKeys(void) { return @[ kMRAProcessIdentifier, kMRAPlaying ]; }
 
 bool allMandatoryPayloadKeysSet(NSDictionary *data) {
     NSArray<NSString *> *keys = mandatoryPayloadKeys();
@@ -67,8 +64,7 @@ bool allMandatoryPayloadKeysSet(NSDictionary *data) {
             return false;
         }
         id value = data[key];
-        if ([value isKindOfClass:[NSString class]] &&
-            [(NSString *)value length] == 0) {
+        if ([value isKindOfClass:[NSString class]] && [(NSString *)value length] == 0) {
             return false;
         }
     }
@@ -77,7 +73,7 @@ bool allMandatoryPayloadKeysSet(NSDictionary *data) {
 
 NSArray<NSString *> *identifyingPayloadKeys(void) {
     return @[
-        kMRAProcessIdentifier, kMRABundleIdentifier,
-        kMRAParentApplicationBundleIdentifier, kMRATitle, kMRAArtist, kMRAAlbum
+        kMRAProcessIdentifier, kMRABundleIdentifier, kMRAParentApplicationBundleIdentifier, kMRATitle, kMRAArtist,
+        kMRAAlbum
     ];
 }

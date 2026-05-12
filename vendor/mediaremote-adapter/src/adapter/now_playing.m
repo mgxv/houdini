@@ -13,13 +13,11 @@
 void waitForCommandCompletion() {
     id semaphore = dispatch_semaphore_create(0);
 
-    g_mediaRemote.getNowPlayingApplicationPID(
-        g_serialdispatchQueue, ^(int pid) {
-          dispatch_semaphore_signal(semaphore);
-        });
+    g_mediaRemote.getNowPlayingApplicationPID(g_serialdispatchQueue, ^(int pid) {
+        dispatch_semaphore_signal(semaphore);
+    });
 
-    dispatch_time_t timeout =
-        dispatch_time(DISPATCH_TIME_NOW, WAIT_TIMEOUT_MILLIS * NSEC_PER_MSEC);
+    dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, WAIT_TIMEOUT_MILLIS * NSEC_PER_MSEC);
     dispatch_semaphore_wait(semaphore, timeout);
 }
 
@@ -52,41 +50,38 @@ NSNumber *getElapsedTimeNow(NSDictionary *information) {
     return @(realElapsed);
 }
 
-NSMutableDictionary *convertNowPlayingInformation(NSDictionary *information,
-                                                  bool convertMicros,
-                                                  bool calculateNow,
-                                                  bool withoutArtwork) {
+NSMutableDictionary *convertNowPlayingInformation(
+    NSDictionary *information, bool convertMicros, bool calculateNow, bool withoutArtwork) {
     NSMutableDictionary *data = [NSMutableDictionary dictionary];
 
     void (^setKey)(id, id) = ^(id key, id fromKey) {
-      id value = nil;
-      if (information != nil) {
-          id result = information[fromKey];
-          if (result != nil) {
-              value = result;
-          }
-      }
-      if (value != nil) {
-          [data setObject:value forKey:key];
-      }
+        id value = nil;
+        if (information != nil) {
+            id result = information[fromKey];
+            if (result != nil) {
+                value = result;
+            }
+        }
+        if (value != nil) {
+            [data setObject:value forKey:key];
+        }
     };
 
     void (^setValue)(id key, id (^)(void)) = ^(id key, id (^evaluate)(void)) {
-      id value = nil;
-      if (information != nil) {
-          value = evaluate();
-      }
-      if (value != nil) {
-          [data setObject:value forKey:key];
-      }
+        id value = nil;
+        if (information != nil) {
+            value = evaluate();
+        }
+        if (value != nil) {
+            [data setObject:value forKey:key];
+        }
     };
 
     setKey(kMRATitle, kMRMediaRemoteNowPlayingInfoTitle);
     setKey(kMRAArtist, kMRMediaRemoteNowPlayingInfoArtist);
     setKey(kMRAAlbum, kMRMediaRemoteNowPlayingInfoAlbum);
     if (!withoutArtwork) {
-        setKey(kMRAArtworkMimeType,
-               kMRMediaRemoteNowPlayingInfoArtworkMIMEType);
+        setKey(kMRAArtworkMimeType, kMRMediaRemoteNowPlayingInfoArtworkMIMEType);
         setKey(kMRAArtworkData, kMRMediaRemoteNowPlayingInfoArtworkData);
     }
 
@@ -98,63 +93,56 @@ NSMutableDictionary *convertNowPlayingInformation(NSDictionary *information,
             // This key is added and does not replace the original because it
             // is just a rough estimation, meant to be used for convenience.
             setValue(kMRAElapsedTimeNow, ^id {
-              id elapsedTime =
-                  information[kMRMediaRemoteNowPlayingInfoElapsedTime];
-              id nowValue = getElapsedTimeNow(information);
-              if (nowValue != nil) {
-                  elapsedTime = nowValue;
-              }
-              return elapsedTime;
+                id elapsedTime = information[kMRMediaRemoteNowPlayingInfoElapsedTime];
+                id nowValue = getElapsedTimeNow(information);
+                if (nowValue != nil) {
+                    elapsedTime = nowValue;
+                }
+                return elapsedTime;
             });
         }
     } else {
         // These keys replace their original counterparts because semantics
         // don't change and no accuracy is lost, merely the time unit changes.
         setValue(kMRADurationMicros, ^id {
-          id duration = information[kMRMediaRemoteNowPlayingInfoDuration];
-          if (duration != nil && [duration isKindOfClass:[NSNumber class]]) {
-              NSTimeInterval durationMicros =
-                  [duration doubleValue] * 1000 * 1000;
-              return @(floor(durationMicros));
-          }
-          return nil;
+            id duration = information[kMRMediaRemoteNowPlayingInfoDuration];
+            if (duration != nil && [duration isKindOfClass:[NSNumber class]]) {
+                NSTimeInterval durationMicros = [duration doubleValue] * 1000 * 1000;
+                return @(floor(durationMicros));
+            }
+            return nil;
         });
         setValue(kMRAElapsedTimeMicros, ^id {
-          id elapsedTime = information[kMRMediaRemoteNowPlayingInfoElapsedTime];
-          if (elapsedTime != nil &&
-              [elapsedTime isKindOfClass:[NSNumber class]]) {
-              NSTimeInterval elapsedTimeMicros =
-                  [elapsedTime doubleValue] * 1000 * 1000;
-              return @(floor(elapsedTimeMicros));
-          }
-          return nil;
+            id elapsedTime = information[kMRMediaRemoteNowPlayingInfoElapsedTime];
+            if (elapsedTime != nil && [elapsedTime isKindOfClass:[NSNumber class]]) {
+                NSTimeInterval elapsedTimeMicros = [elapsedTime doubleValue] * 1000 * 1000;
+                return @(floor(elapsedTimeMicros));
+            }
+            return nil;
         });
         if (calculateNow) {
             // This key is added and does not replace the original because it
             // is just a rough estimation, meant to be used for convenience.
             setValue(kMRAElapsedTimeNowMicros, ^id {
-              id elapsedTime =
-                  information[kMRMediaRemoteNowPlayingInfoElapsedTime];
-              if (calculateNow) {
-                  elapsedTime = getElapsedTimeNow(information);
-              }
-              if (elapsedTime != nil &&
-                  [elapsedTime isKindOfClass:[NSNumber class]]) {
-                  NSTimeInterval elapsedTimeMicros =
-                      [elapsedTime doubleValue] * 1000 * 1000;
-                  return @(floor(elapsedTimeMicros));
-              }
-              return nil;
+                id elapsedTime = information[kMRMediaRemoteNowPlayingInfoElapsedTime];
+                if (calculateNow) {
+                    elapsedTime = getElapsedTimeNow(information);
+                }
+                if (elapsedTime != nil && [elapsedTime isKindOfClass:[NSNumber class]]) {
+                    NSTimeInterval elapsedTimeMicros = [elapsedTime doubleValue] * 1000 * 1000;
+                    return @(floor(elapsedTimeMicros));
+                }
+                return nil;
             });
         }
         setValue(kMRATimestampEpochMicros, ^id {
-          id timestamp = information[kMRMediaRemoteNowPlayingInfoTimestamp];
-          if (timestamp != nil && [timestamp isKindOfClass:[NSDate class]]) {
-              NSTimeInterval timestampEpoch = [timestamp timeIntervalSince1970];
-              NSTimeInterval timestampEpochMicro = timestampEpoch * 1000 * 1000;
-              return @(floor(timestampEpochMicro));
-          }
-          return nil;
+            id timestamp = information[kMRMediaRemoteNowPlayingInfoTimestamp];
+            if (timestamp != nil && [timestamp isKindOfClass:[NSDate class]]) {
+                NSTimeInterval timestampEpoch = [timestamp timeIntervalSince1970];
+                NSTimeInterval timestampEpochMicro = timestampEpoch * 1000 * 1000;
+                return @(floor(timestampEpochMicro));
+            }
+            return nil;
         });
     }
 

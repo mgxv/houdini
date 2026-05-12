@@ -37,8 +37,7 @@ void printErr(NSString *message) {
 void printErrf(NSString *format, ...) {
     va_list args;
     va_start(args, format);
-    NSString *formattedMessage = [[NSString alloc] initWithFormat:format
-                                                        arguments:args];
+    NSString *formattedMessage = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     fprintf(stderr, "%s\n", [formattedMessage UTF8String]);
     fflush(stderr);
@@ -52,16 +51,13 @@ void fail(NSString *message) {
 void failf(NSString *format, ...) {
     va_list args;
     va_start(args, format);
-    NSString *formattedMessage = [[NSString alloc] initWithFormat:format
-                                                        arguments:args];
+    NSString *formattedMessage = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     fail(formattedMessage);
 }
 
 NSString *formatError(NSError *error) {
-    return
-        [NSString stringWithFormat:@"%@ (%@:%ld)", [error localizedDescription],
-                                   [error domain], (long)[error code]];
+    return [NSString stringWithFormat:@"%@ (%@:%ld)", [error localizedDescription], [error domain], (long)[error code]];
 }
 
 static id sanitizeValueForJsonEncoding(id value, NSString *parentKey) {
@@ -71,8 +67,7 @@ static id sanitizeValueForJsonEncoding(id value, NSString *parentKey) {
         NSMutableDictionary *result = [NSMutableDictionary dictionary];
         for (id key in dictionary) {
             if (![key isKindOfClass:[NSString class]]) {
-                printErrf(@"Invalid JSON key in dictionary: %@ (%@)",
-                          [key description], [key class]);
+                printErrf(@"Invalid JSON key in dictionary: %@ (%@)", [key description], [key class]);
                 continue;
             }
             id raw = [dictionary objectForKey:key];
@@ -82,7 +77,7 @@ static id sanitizeValueForJsonEncoding(id value, NSString *parentKey) {
             } else {
                 printErrf(@"Invalid JSON value type in dictionary for key "
                           @"'%@': %@ (%@)",
-                          key, raw, [raw class]);
+                    key, raw, [raw class]);
             }
         }
         return result;
@@ -97,16 +92,13 @@ static id sanitizeValueForJsonEncoding(id value, NSString *parentKey) {
             } else if (parentKey != nil) {
                 printErrf(@"Invalid JSON value type in array at index %d "
                           @"under key '%@': %@ (%@)",
-                          i, parentKey, elem, [elem class]);
+                    i, parentKey, elem, [elem class]);
             } else {
-                printErrf(
-                    @"Invalid JSON value type in array at index %d: %@ (%@)", i,
-                    elem, [elem class]);
+                printErrf(@"Invalid JSON value type in array at index %d: %@ (%@)", i, elem, [elem class]);
             }
         }
         return result;
-    } else if ([value isKindOfClass:[NSString class]] ||
-               [value isKindOfClass:[NSNull class]]) {
+    } else if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNull class]]) {
         return value;
     } else if ([value isKindOfClass:[NSNumber class]]) {
         NSNumber *number = (NSNumber *)value;
@@ -119,11 +111,10 @@ static id sanitizeValueForJsonEncoding(id value, NSString *parentKey) {
         static NSDateFormatter *formatter = nil;
         static dispatch_once_t onceToken;
         dispatch_once(&onceToken, ^{
-          formatter = [[NSDateFormatter alloc] init];
-          formatter.locale =
-              [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
-          formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"UTC"];
-          formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss'Z'";
+            formatter = [[NSDateFormatter alloc] init];
+            formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+            formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"UTC"];
+            formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss'Z'";
         });
         return [formatter stringFromDate:(NSDate *)value];
     } else if ([value isKindOfClass:[NSURL class]]) {
@@ -149,25 +140,19 @@ NSString *serializeJsonDictionarySafe(NSDictionary *any, bool prettyPrint) {
         NSCAssert(false, @"Sanitized JSON dictionary is nil");
         return JSON_NULL;
     }
-    NSCAssert([NSJSONSerialization isValidJSONObject:any],
-              @"Sanitized JSON dictionary is not a valid JSON object");
+    NSCAssert([NSJSONSerialization isValidJSONObject:any], @"Sanitized JSON dictionary is not a valid JSON object");
     @try {
         NSError *error;
-        NSJSONWritingOptions options =
-            prettyPrint ? NSJSONWritingPrettyPrinted : 0;
-        NSData *serialized = [NSJSONSerialization dataWithJSONObject:any
-                                                             options:options
-                                                               error:&error];
+        NSJSONWritingOptions options = prettyPrint ? NSJSONWritingPrettyPrinted : 0;
+        NSData *serialized = [NSJSONSerialization dataWithJSONObject:any options:options error:&error];
         if (!serialized) {
             printErrf(@"Failed to serialize JSON: %@", error);
             return nil;
         }
-        return [[NSString alloc] initWithData:serialized
-                                     encoding:NSUTF8StringEncoding];
+        return [[NSString alloc] initWithData:serialized encoding:NSUTF8StringEncoding];
     } @catch (NSException *exception) {
         if ([exception.name isEqualToString:NSInvalidArgumentException]) {
-            printErrf(@"Exception during JSON serialization: %@: %@", exception,
-                      [any class]);
+            printErrf(@"Exception during JSON serialization: %@: %@", exception, [any class]);
         } else {
             printErrf(@"Exception during JSON serialization: %@", exception);
         }
@@ -199,8 +184,7 @@ bool appForPID(int pid, void (^block)(NSRunningApplication *)) {
     if (pid <= 0) {
         return false;
     }
-    NSRunningApplication *process =
-        [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    NSRunningApplication *process = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
     if (process == nil) {
         return false;
     }
@@ -211,8 +195,7 @@ bool appForPID(int pid, void (^block)(NSRunningApplication *)) {
 static NSString *guessImageMimeTypeFromData(NSData *data) {
     if (!data)
         return nil;
-    CGImageSourceRef src =
-        CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+    CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
     if (!src)
         return nil;
     CFStringRef uti = CGImageSourceGetType(src);
@@ -223,8 +206,7 @@ static NSString *guessImageMimeTypeFromData(NSData *data) {
     UTType *type = [UTType typeWithIdentifier:(__bridge NSString *)uti];
     return type.preferredMIMEType;
 #else
-    CFStringRef mime =
-        UTTypeCopyPreferredTagWithClass(uti, kUTTagClassMIMEType);
+    CFStringRef mime = UTTypeCopyPreferredTagWithClass(uti, kUTTagClassMIMEType);
     if (!mime)
         return nil;
     NSString *mimeType = (__bridge_transfer NSString *)mime;
@@ -237,10 +219,8 @@ void makePayloadHumanReadable(NSMutableDictionary *dict) {
         id value = dict[key];
         if ([value isKindOfClass:[NSData class]]) {
             NSString *mimeType = guessImageMimeTypeFromData(value);
-            dict[key] = [NSString
-                stringWithFormat:@"<%@%@%lu bytes...>", mimeType ?: @"",
-                                 mimeType ? @" " : @"",
-                                 (unsigned long)[value length]];
+            dict[key] = [NSString stringWithFormat:@"<%@%@%lu bytes...>", mimeType ?: @"", mimeType ? @" " : @"",
+                (unsigned long)[value length]];
         }
     }
 }

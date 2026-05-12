@@ -23,8 +23,6 @@ void adapter_seek(long position) {
     waitForCommandCompletion();
 }
 
-static inline long seek_0_position() {
-    return getEnvFuncParamLongSafe(@"adapter_seek", 0, @"position");
-}
+static inline long seek_0_position() { return getEnvFuncParamLongSafe(@"adapter_seek", 0, @"position"); }
 
 void adapter_seek_env() { adapter_seek(seek_0_position()); }
