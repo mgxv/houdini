@@ -1,0 +1,44 @@
+# clang-format config for the vendored mediaremote-adapter Obj-C sources.
+# Auto-discovered for any file under this directory. Note: reformatting
+# diverges from upstream ungive/mediaremote-adapter — keep changes minimal
+# so future patch merges stay painless.
+
+# --- Base style ---------------------------------------------------------
+# Every override below sits on top of LLVM's defaults.
+BasedOnStyle: LLVM
+
+# --- Indentation --------------------------------------------------------
+# Spaces only, 4-wide everywhere — including inside Obj-C blocks (^{...}),
+# which clang-format otherwise indents at 2 and looks inconsistent next to
+# the rest of the code.
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+ObjCBlockIndentWidth: 4
+
+# --- Line width ---------------------------------------------------------
+# LLVM default is 80; bumped to 120 to fit the long Obj-C selector names.
+ColumnLimit: 120
+
+# --- Alignment ----------------------------------------------------------
+# Prefer continuation indent over column alignment. Layout no longer
+# depends on identifier lengths, and renames don't churn unrelated lines.
+AlignAfterOpenBracket: DontAlign   # don't align args under '('
+AlignOperands: DontAlign           # don't align wrapped binary operands
+AlignEscapedNewlines: Left         # pack trailing '\' left in multi-line macros
+AlignTrailingComments:
+  Kind: Never                      # don't column-align trailing '// comments'
+
+# --- Definition spacing -------------------------------------------------
+# Always leave a blank line between top-level function / struct / enum
+# definitions; without this stream.m's static helper soup runs together.
+SeparateDefinitionBlocks: Always
+
+# --- Brace style --------------------------------------------------------
+# K&R (LLVM default): '{' on the same line as the function/control/type
+# header, body on the next line, closing '}' on its own line.
+#   void foo() {
+#       body;
+#   }
+# Nothing to override — this is the LLVM default.
