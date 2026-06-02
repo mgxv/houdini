@@ -136,7 +136,10 @@ struct ControllerOps {
 @MainActor
 private func makeSmartOps(menuBar: MenuBarToggler) -> ControllerOps {
     let artifacts = locateArtifacts()
-    let controller = SmartController(menuBar: menuBar)
+    let controller = SmartController(
+        menuBar: menuBar,
+        nowPlayingReprime: { fetchNowPlayingOnce(artifacts: artifacts) },
+    )
     let adapter = AdapterClient(
         artifacts: artifacts,
         onUpdate: { @MainActor snapshot in

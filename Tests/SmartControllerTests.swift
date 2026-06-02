@@ -32,11 +32,14 @@ private final class MockFrontmostProvider: FrontmostAppProvider {
 struct SmartControllerTests {
     private static func makeController(
         frontmost: FrontmostInfo? = nil,
+        reprime: (@MainActor () -> NowPlayingSnapshot?)? = nil,
     ) -> (SmartController, RecordingMenuBar, MockFrontmostProvider) {
         let bar = RecordingMenuBar()
         let provider = MockFrontmostProvider()
         provider.frontmostApp = frontmost
-        let controller = SmartController(menuBar: bar, frontmostProvider: provider)
+        let controller = SmartController(
+            menuBar: bar, frontmostProvider: provider, nowPlayingReprime: reprime,
+        )
         return (controller, bar, provider)
     }
 
@@ -192,6 +195,48 @@ struct SmartControllerTests {
         controller.handleDockEvent(.fullScreenState(
             DockFullScreenState(isFullScreen: true, fsOwnerPID: FSOwnerPID(200)),
         ))
+
+        #expect(bar.calls == [.apply(shouldHide: true, isFullScreen: true)])
+    }
+
+    // MARK: - Wake re-prime
+
+    @Test("Wake re-primes Now Playing the stream missed and hides")
+    func wakeReprimesAndHides() {
+        let reprimed = Self.playing(pid: 100, parentBundle: "com.same.App")
+        let (controller, bar, _) = Self.makeController(
+            frontmost: FrontmostInfo(pid: 100, name: "App", bundle: "com.same.App"),
+            reprime: { reprimed },
+        )
+        // In FS, but the stream only ever delivered a paused snapshot.
+        controller.handleDockEvent(Self.fsEntry100)
+        controller.updateMedia(NowPlayingSnapshot(
+            playing: false, pid: NowPlayingPID(100),
+            bundle: "com.same.App", parentBundle: "com.same.App", title: "Track",
+        ))
+        #expect(bar.calls.last == .apply(shouldHide: false, isFullScreen: true))
+        bar.calls.removeAll()
+
+        // Wake: the one-shot get reports playback resumed → bar hides.
+        controller.handleWake()
+
+        #expect(bar.calls == [.apply(shouldHide: true, isFullScreen: true)])
+    }
+
+    @Test("Wake forces a re-assert even when nothing net-changed")
+    func wakeForcesReassert() {
+        let snapshot = Self.playing(pid: 100, parentBundle: "com.same.App")
+        let (controller, bar, _) = Self.makeController(
+            frontmost: FrontmostInfo(pid: 100, name: "App", bundle: "com.same.App"),
+            reprime: { snapshot },
+        )
+        controller.updateMedia(snapshot)
+        controller.handleDockEvent(Self.fsEntry100)
+        #expect(bar.calls.last == .apply(shouldHide: true, isFullScreen: true))
+        bar.calls.removeAll()
+
+        // Identical state — without force this would be eval_skipped.
+        controller.handleWake()
 
         #expect(bar.calls == [.apply(shouldHide: true, isFullScreen: true)])
     }
