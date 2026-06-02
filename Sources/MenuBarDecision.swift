@@ -17,8 +17,7 @@ enum MenuBarDecision {
     case showDenyList
 
     var shouldHide: Bool {
-        if case .hide = self { return true }
-        return false
+        self == .hide
     }
 
     /// The reason as a short identifier — `hide` or
