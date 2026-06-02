@@ -16,6 +16,7 @@ private enum EvalTrigger: String {
     case adapter
     case hotkey
     case overrides
+    case wake
 }
 
 enum Overrule: String {
@@ -94,6 +95,9 @@ final class SmartController: NSObject {
 
     private let menuBar: MenuBarToggler
     private let frontmostProvider: FrontmostAppProvider
+    /// One-shot Now Playing fetch to re-prime media on wake; `nil` in
+    /// tests / when no adapter is wired.
+    private let nowPlayingReprime: (@MainActor () -> NowPlayingSnapshot?)?
     private var dockFs: DockFullScreenState = .initial
     private var isPlaying: Bool = false
     private var nowPlayingPID: NowPlayingPID?
@@ -123,9 +127,11 @@ final class SmartController: NSObject {
     init(
         menuBar: MenuBarToggler,
         frontmostProvider: FrontmostAppProvider = WorkspaceFrontmostAppProvider(),
+        nowPlayingReprime: (@MainActor () -> NowPlayingSnapshot?)? = nil,
     ) {
         self.menuBar = menuBar
         self.frontmostProvider = frontmostProvider
+        self.nowPlayingReprime = nowPlayingReprime
         super.init()
     }
 
@@ -136,6 +142,12 @@ final class SmartController: NSObject {
             self,
             selector: #selector(onFrontAppChange(_:)),
             name: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(onWake(_:)),
+            name: NSWorkspace.didWakeNotification,
             object: nil,
         )
         try dockSpaceWatcher.start()
@@ -170,12 +182,34 @@ final class SmartController: NSObject {
     }
 
     func updateMedia(_ snapshot: NowPlayingSnapshot) {
+        applyMedia(snapshot)
+        evaluate(trigger: .adapter)
+    }
+
+    private func applyMedia(_ snapshot: NowPlayingSnapshot) {
         isPlaying = snapshot.playing
         nowPlayingPID = snapshot.pid
         nowPlayingBundle = snapshot.bundle
         nowPlayingParentBundle = snapshot.parentBundle
         nowPlayingTitle = snapshot.title
-        evaluate(trigger: .adapter)
+    }
+
+    @objc private func onWake(_: Notification) {
+        handleWake()
+    }
+
+    /// Re-prime cached signals from authoritative sources on wake (Dock
+    /// and the adapter stream can both go stale across sleep), then force
+    /// a re-eval so the pref is re-asserted even if nothing net-changed.
+    func handleWake() {
+        Log.controller.debug("→ wake_rx")
+        if let snapshot = nowPlayingReprime?() {
+            applyMedia(snapshot)
+        }
+        if dockFs.isFullScreen, let pid = frontmostProvider.frontmostApp?.pid {
+            refreshFSOwner(pid: pid)
+        }
+        evaluate(trigger: .wake, force: true)
     }
 
     func updateOverrides(_ overrides: AppOverrides) {
@@ -246,10 +280,10 @@ final class SmartController: NSObject {
     /// Single point of integration — every input channel funnels
     /// here. The `trigger` is preserved through to the log line so a
     /// surprising decision can be traced back to its input.
-    private func evaluate(trigger: EvalTrigger) {
+    private func evaluate(trigger: EvalTrigger, force: Bool = false) {
         let snap = takeSnapshot()
 
-        if let last = lastSnapshot, snap == last {
+        if !force, let last = lastSnapshot, snap == last {
             Log.controller.debug(
                 "→ eval_skipped trig=\(trigger.rawValue, privacy: .public)",
             )
