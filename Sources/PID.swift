@@ -19,8 +19,7 @@ private func responsibleProcess(for pid: pid_t) -> pid_t
 /// True if `a` and `b` resolve to the same user-facing app via
 /// `responsibility_get_pid_responsible_for_pid`. The syscall returns
 /// 0 for untracked PIDs and the PID itself for non-delegating ones;
-/// both filter out via the `> 0` and identity checks. See
-/// `isSameProcess(as:)` for the four match paths in plain English.
+/// both filter out via the `> 0` and identity checks.
 private func sameResponsibleApp(_ a: pid_t, _ b: pid_t) -> Bool {
     if a == b { return true }
     let aResp = responsibleProcess(for: a)
