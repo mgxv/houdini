@@ -5,7 +5,7 @@
 import Testing
 
 @MainActor
-private final class RecordingMenuBar: MenuBarToggler {
+private final class RecordingMenuBar: MenuBarToggling {
     enum Call: Equatable {
         case apply(shouldHide: Bool, isFullScreen: Bool)
         case resetToVisible
@@ -48,7 +48,7 @@ struct CurrentControllerTests {
     ) -> (CurrentController, RecordingMenuBar, Trace) {
         let trace = Trace()
         let bar = RecordingMenuBar()
-        let opsFactory: @MainActor (Mode, MenuBarToggler) -> ControllerOps = { mode, _ in
+        let opsFactory: @MainActor (Mode, MenuBarToggling) -> ControllerOps = { mode, _ in
             recordingOps(for: mode, trace: trace)
         }
         let controller = CurrentController(

@@ -93,7 +93,7 @@ final class SmartController: NSObject {
 
     // MARK: - State
 
-    private let menuBar: MenuBarToggler
+    private let menuBar: MenuBarToggling
     private let frontmostProvider: FrontmostAppProvider
     /// One-shot Now Playing fetch to re-prime media on wake; `nil` in
     /// tests / when no adapter is wired.
@@ -125,7 +125,7 @@ final class SmartController: NSObject {
     // MARK: - Lifecycle
 
     init(
-        menuBar: MenuBarToggler,
+        menuBar: MenuBarToggling,
         frontmostProvider: FrontmostAppProvider = WorkspaceFrontmostAppProvider(),
         nowPlayingReprime: (@MainActor () -> NowPlayingSnapshot?)? = nil,
     ) {

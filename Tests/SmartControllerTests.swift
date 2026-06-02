@@ -1,11 +1,11 @@
-// Drives SmartController with a recording MenuBarToggler and a mock
+// Drives SmartController with a recording MenuBarToggling and a mock
 // FrontmostAppProvider for deterministic gate coverage.
 
 @testable import houdini
 import Testing
 
 @MainActor
-private final class RecordingMenuBar: MenuBarToggler {
+private final class RecordingMenuBar: MenuBarToggling {
     enum Call: Equatable {
         case apply(shouldHide: Bool, isFullScreen: Bool)
         case resetToVisible
