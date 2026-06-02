@@ -36,7 +36,8 @@ final class HotkeyWatcher {
 
     // MARK: Lifecycle
 
-    /// Returns false if the chord is already taken; non-fatal — the
+    /// Returns false if registration fails — most often because the
+    /// chord is already claimed by another app. Non-fatal: the
     /// daemon's automatic control still works without it.
     func start(chord: Chord = defaultChord) -> Bool {
         guard handlerRef == nil else { return true }

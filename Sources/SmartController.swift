@@ -107,7 +107,8 @@ final class SmartController: NSObject {
     private var appOverrides: AppOverrides = .empty
 
     /// Hotkey-driven override. Cleared only on Desktop arrival;
-    /// survives front-app switches, FS↔FS hops, and play/pause.
+    /// survives front-app switches, FS↔FS hops, play/pause, and
+    /// sleep/wake.
     var overrule: Overrule = .auto
 
     private var lastSnapshot: Snapshot?
@@ -279,7 +280,9 @@ final class SmartController: NSObject {
 
     /// Single point of integration — every input channel funnels
     /// here. The `trigger` is preserved through to the log line so a
-    /// surprising decision can be traced back to its input.
+    /// surprising decision can be traced back to its input. `force`
+    /// bypasses the snapshot dedup to re-assert the pref even when
+    /// nothing changed (used on wake).
     private func evaluate(trigger: EvalTrigger, force: Bool = false) {
         let snap = takeSnapshot()
 

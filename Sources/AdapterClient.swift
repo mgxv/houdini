@@ -22,7 +22,8 @@
 // continuations so the consumer loops exit.
 //
 // `fetchNowPlayingOnce` at the bottom runs the adapter in one-shot
-// `get` mode for `status`.
+// `get` mode to prime the controller's first evaluation at startup
+// and on wake.
 
 import Foundation
 import os
@@ -279,8 +280,9 @@ actor AdapterClient {
 
 // MARK: - One-shot fetch (status command)
 
-/// Synchronous one-shot `mediaremote-adapter.pl get` for the
-/// `status` subcommand. Blocks until the subprocess exits.
+/// Synchronous one-shot `mediaremote-adapter.pl get` used to prime
+/// Now Playing state at startup and on wake. Blocks until the
+/// subprocess exits.
 ///
 /// `get` emits the raw payload dict (or JSON `null`), not the
 /// `{type, payload}` envelope that `stream` uses.

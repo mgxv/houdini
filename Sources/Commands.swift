@@ -1,6 +1,6 @@
 // Implementations of the CLI verbs: (default) foreground run,
-// `status`, `logs`, `version`, `help`. LaunchAgent lifecycle is
-// delegated to Homebrew (`brew services`).
+// `status`, `mode`, `deny`, `logs`, `version`, `help`. LaunchAgent
+// lifecycle is delegated to Homebrew (`brew services`).
 
 import AppKit
 import Foundation
