@@ -376,25 +376,23 @@ final class SmartController: NSObject {
     }
 
     private static func formatFront(_ snap: Snapshot) -> String {
-        let head = formatNullableString(snap.appKitFrontBundle)
+        let bundle = formatNullableString(snap.appKitFrontBundle)
         let pid = formatNullable(snap.appKitFrontPID?.rawValue)
         let name = quoted(snap.appKitFrontName)
-        let bundle = formatNullableString(snap.appKitFrontBundle)
         let resp = formatNullable(snap.appKitFrontPID?.responsiblePID)
         let fs = snap.dockFs.isFullScreen
         let fsPid = formatNullable(snap.dockFs.fsOwnerPID?.rawValue)
-        return "\(head)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid)]"
+        return "\(bundle)[pid=\(pid),name=\(name),bundle=\(bundle),resp=\(resp),fs=\(fs),fsPid=\(fsPid)]"
     }
 
     private static func formatNowPlaying(_ snap: Snapshot) -> String {
-        let head = formatNullableString(snap.nowPlayingBundle)
-        let pid = formatNullable(snap.nowPlayingPID?.rawValue)
         let bundle = formatNullableString(snap.nowPlayingBundle)
+        let pid = formatNullable(snap.nowPlayingPID?.rawValue)
         let parent = formatNullableString(snap.nowPlayingParentBundle)
         let resp = formatNullable(snap.nowPlayingPID?.responsiblePID)
         let play = snap.isPlaying
         let title = formatNullableString(snap.nowPlayingTitle)
-        return "\(head)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play),title=\(title)]"
+        return "\(bundle)[pid=\(pid),bundle=\(bundle),parent=\(parent),resp=\(resp),play=\(play),title=\(title)]"
     }
 
     // MARK: - Log formatting — boundary breadcrumbs
