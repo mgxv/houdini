@@ -1,7 +1,22 @@
-// Filesystem paths used at runtime to locate the vendored
-// mediaremote-adapter script and MediaRemoteAdapter.framework.
+// Filesystem path resolution used at runtime: the vendored
+// mediaremote-adapter artifacts, and the Application Support directory
+// backing the on-disk `*State` stores.
 
 import Foundation
+
+/// `~/Library/Application Support/<subsystem>/<name>`, or nil if it
+/// can't be resolved. Shared by the `*State` stores.
+func subsystemSupportURL(_ name: String) -> URL? {
+    guard let appSupport = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: false,
+    ) else { return nil }
+    return appSupport
+        .appendingPathComponent(Log.subsystem, isDirectory: true)
+        .appendingPathComponent(name)
+}
 
 struct AdapterArtifacts {
     let scriptPath: String

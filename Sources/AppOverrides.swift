@@ -26,15 +26,7 @@ extension AppOverrides: Codable {
 
 enum AppOverridesState {
     private static func url() -> URL? {
-        guard let appSupport = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false,
-        ) else { return nil }
-        return appSupport
-            .appendingPathComponent(Log.subsystem, isDirectory: true)
-            .appendingPathComponent("apps.json")
+        subsystemSupportURL("apps.json")
     }
 
     static func read() -> AppOverrides {

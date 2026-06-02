@@ -127,15 +127,7 @@ final class HotkeyWatcher {
 /// shutdown so a stale value doesn't outlive the daemon.
 enum HotkeyState {
     private static func url() -> URL? {
-        guard let appSupport = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false,
-        ) else { return nil }
-        return appSupport
-            .appendingPathComponent(Log.subsystem, isDirectory: true)
-            .appendingPathComponent("hotkey.state")
+        subsystemSupportURL("hotkey.state")
     }
 
     static func write(_ state: String) {

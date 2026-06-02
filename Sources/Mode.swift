@@ -12,15 +12,7 @@ enum Mode: String {
 /// Default is `.smart` when the file is missing or malformed.
 enum ModeState {
     private static func url() -> URL? {
-        guard let appSupport = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false,
-        ) else { return nil }
-        return appSupport
-            .appendingPathComponent(Log.subsystem, isDirectory: true)
-            .appendingPathComponent("mode")
+        subsystemSupportURL("mode")
     }
 
     static func read() -> Mode {
