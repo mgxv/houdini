@@ -108,7 +108,13 @@ private func isSameAppAsNowPlaying(
     nowPlayingParentBundle: String?,
 ) -> Bool {
     if appKitFrontPID.isSameProcess(as: nowPlayingPID) { return true }
-    if let parent = nowPlayingParentBundle, !parent.isEmpty,
-       parent == appKitFrontBundle { return true }
+    if bundlePathMatches(parent: nowPlayingParentBundle, front: appKitFrontBundle) { return true }
     return false
+}
+
+/// Gate-6 bundle path: a non-empty Now Playing parent bundle equal to
+/// the frontmost bundle. Shared with `SmartController`'s `appMatch` log.
+func bundlePathMatches(parent: String?, front: String?) -> Bool {
+    guard let parent, !parent.isEmpty else { return false }
+    return parent == front
 }

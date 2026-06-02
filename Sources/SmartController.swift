@@ -362,11 +362,10 @@ final class SmartController: NSObject {
         guard let appKitFrontPID = snap.appKitFrontPID,
               let npPID = snap.nowPlayingPID else { return "n/a" }
         let process = appKitFrontPID.isSameProcess(as: npPID)
-        let bundle: Bool = if let parent = snap.nowPlayingParentBundle, !parent.isEmpty {
-            parent == snap.appKitFrontBundle
-        } else {
-            false
-        }
+        let bundle = bundlePathMatches(
+            parent: snap.nowPlayingParentBundle,
+            front: snap.appKitFrontBundle,
+        )
         switch (process, bundle) {
         case (true, true): return "both"
         case (true, false): return "process"
