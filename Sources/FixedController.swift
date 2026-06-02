@@ -6,14 +6,14 @@ import Foundation
 
 @MainActor
 final class FixedController {
-    private let menuBar: MenuBarToggler
+    private let menuBar: MenuBarToggling
     private var isHidden: Bool = false
 
     private lazy var hotkeyWatcher = HotkeyWatcher { [weak self] in
         self?.toggle()
     }
 
-    init(menuBar: MenuBarToggler) {
+    init(menuBar: MenuBarToggling) {
         self.menuBar = menuBar
     }
 

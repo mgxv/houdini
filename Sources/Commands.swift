@@ -23,7 +23,7 @@ func runForeground() {
 
     acquireInstanceLock()
 
-    let menuBar = MenuBarToggle()
+    let menuBar = MenuBarToggler()
     menuBar.resetToVisible()
 
     let mode = ModeState.read()
@@ -55,8 +55,8 @@ func runForeground() {
 /// rebuild and push into the live ops.
 @MainActor
 final class CurrentController {
-    private let menuBar: MenuBarToggler
-    private let opsFactory: @MainActor (Mode, MenuBarToggler) -> ControllerOps
+    private let menuBar: MenuBarToggling
+    private let opsFactory: @MainActor (Mode, MenuBarToggling) -> ControllerOps
     private let modeReader: () -> Mode
     private let overridesReader: () -> AppOverrides
     private(set) var mode: Mode
@@ -65,8 +65,8 @@ final class CurrentController {
 
     init(
         mode: Mode,
-        menuBar: MenuBarToggler,
-        opsFactory: @escaping @MainActor (Mode, MenuBarToggler)
+        menuBar: MenuBarToggling,
+        opsFactory: @escaping @MainActor (Mode, MenuBarToggling)
             -> ControllerOps = defaultOpsFactory,
         modeReader: @escaping () -> Mode = ModeState.read,
         overridesReader: @escaping () -> AppOverrides = AppOverridesState.read,
@@ -120,7 +120,7 @@ final class CurrentController {
 }
 
 @MainActor
-func defaultOpsFactory(_ mode: Mode, _ menuBar: MenuBarToggler) -> ControllerOps {
+func defaultOpsFactory(_ mode: Mode, _ menuBar: MenuBarToggling) -> ControllerOps {
     switch mode {
     case .smart: makeSmartOps(menuBar: menuBar)
     case .fixed: makeFixedOps(menuBar: menuBar)
@@ -134,7 +134,7 @@ struct ControllerOps {
 }
 
 @MainActor
-private func makeSmartOps(menuBar: MenuBarToggler) -> ControllerOps {
+private func makeSmartOps(menuBar: MenuBarToggling) -> ControllerOps {
     let artifacts = locateArtifacts()
     let controller = SmartController(
         menuBar: menuBar,
@@ -176,7 +176,7 @@ private func makeSmartOps(menuBar: MenuBarToggler) -> ControllerOps {
 }
 
 @MainActor
-private func makeFixedOps(menuBar: MenuBarToggler) -> ControllerOps {
+private func makeFixedOps(menuBar: MenuBarToggling) -> ControllerOps {
     let controller = FixedController(menuBar: menuBar)
     return ControllerOps(
         start: { controller.start() },
